@@ -109,7 +109,7 @@ a opcja „Tylko te osoby mają mieć dostęp” dezaktywuje członków spoza li
   5–10 groszy amerykańskich za ocenę, a `CLAUDE_MODEL=claude-haiku-5-5` około 40× taniej.
   Przy kilkunastu zgłoszeniach to łącznie najwyżej kilka dolarów.
 
-Limity ocen: `AI_CLUB_DAILY_LIMIT` dziennie dla całego klubu (domyślnie 25, mieści się w darmowej puli; obejmuje też admina), a na osobę
+Limity ocen: `AI_CLUB_DAILY_LIMIT` dziennie dla całego klubu (domyślnie 25, czyli darmowa pula; w `wrangler.jsonc` ustawione 100, bo konto jest na Workers Paid; obejmuje też admina), a na osobę
 `AI_DAILY_LIMIT` dziennie (domyślnie 8) i `AI_COOLDOWN_MINUTES` przerwy (domyślnie 5 min). Liczą się tylko udane
 oceny; admin i opiekun konkursu nie mają limitów osoby. Limit klubu to bezpiecznik kosztów na planie Workers Paid:
 limit wydatków w Cloudflare (Billing → Spend Management) obejmuje tylko żądania i CPU Workerów, nie Workers AI.
