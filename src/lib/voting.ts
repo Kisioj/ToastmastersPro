@@ -30,7 +30,7 @@ export const METHODS: Record<MethodId, MethodInfo> = {
     short: 'Ranking',
     name: 'Pełny ranking',
     tagline: 'Ułóż wszystkie propozycje od najlepszej do najsłabszej.',
-    scoring: 'Liczymy średnie miejsce każdej propozycji (metoda Bordy). Dodatkowo sprawdzamy zwycięzcę Condorceta — propozycję, która wygrywa z każdą inną w bezpośrednim porównaniu.',
+    scoring: 'Liczymy średnie miejsce każdej propozycji (metoda Bordy). Dodatkowo sprawdzamy zwycięzcę Condorceta, czyli propozycję, która wygrywa z każdą inną w bezpośrednim porównaniu.',
     pros: 'Najwięcej informacji o preferencjach, ale wymaga przemyślenia wszystkich propozycji.',
   },
   approval: {
@@ -53,7 +53,7 @@ export const METHODS: Record<MethodId, MethodInfo> = {
     id: 'points',
     short: 'Punkty',
     name: 'Rozdaj punkty',
-    tagline: 'Rozdziel 10 punktów — możesz dać wszystkie jednej propozycji albo podzielić.',
+    tagline: 'Rozdziel 10 punktów. Możesz dać wszystkie jednej propozycji albo podzielić.',
     scoring: 'Wygrywa największa suma punktów.',
     pros: 'Pozwala wyrazić siłę preferencji; mocni faworyci mogą dostać dużo punktów.',
   },
@@ -61,7 +61,7 @@ export const METHODS: Record<MethodId, MethodInfo> = {
     id: 'duel',
     short: 'Pojedynki',
     name: 'Pojedynki',
-    tagline: 'Dostajesz dwie propozycje naraz — wybierz lepszą. Możesz przerwać w dowolnym momencie.',
+    tagline: 'Dostajesz dwie propozycje naraz, wybierz lepszą. Możesz przerwać w dowolnym momencie.',
     scoring: 'Wygrywa propozycja z najwyższym odsetkiem wygranych pojedynków.',
     pros: 'Najłatwiejsza decyzja w każdym kroku; dobre przy wielu podobnych propozycjach.',
   },
@@ -270,7 +270,7 @@ export function tally(method: MethodId, ballots: unknown[], entries: EntryLite[]
         notes.push(
           winner !== undefined
             ? `Zwycięzca Condorceta (wygrywa w bezpośrednim porównaniu z każdą inną propozycją): „${base(winner)}”.`
-            : 'Brak zwycięzcy Condorceta — żadna propozycja nie wygrywa z każdą inną w bezpośrednim porównaniu.',
+            : 'Brak zwycięzcy Condorceta: żadna propozycja nie wygrywa z każdą inną w bezpośrednim porównaniu.',
         );
       }
       return finish(
@@ -278,7 +278,7 @@ export function tally(method: MethodId, ballots: unknown[], entries: EntryLite[]
         voters,
         ids.map((id) => {
           const avg = voters ? sumPos.get(id)! / voters : 0;
-          return { id, title: base(id), score: voters ? avg : n, label: voters ? `średnie miejsce ${fmtNum(avg)}` : '—' };
+          return { id, title: base(id), score: voters ? avg : n, label: voters ? `średnie miejsce ${fmtNum(avg)}` : '-' };
         }),
         false,
         notes,

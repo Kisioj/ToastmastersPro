@@ -51,7 +51,7 @@ app.route('/', auth);
 // wszystko poniżej wymaga zalogowania
 app.use('*', async (c, next) => {
   if (!c.var.user) {
-    if (c.req.path.startsWith('/api/')) return c.json({ ok: false, error: 'Sesja wygasła — zaloguj się ponownie.' }, 401);
+    if (c.req.path.startsWith('/api/')) return c.json({ ok: false, error: 'Sesja wygasła. Zaloguj się ponownie.' }, 401);
     const next_ = c.req.method === 'GET' ? `?next=${encodeURIComponent(c.req.path)}` : '';
     return c.redirect(`/logowanie${next_}`);
   }
@@ -82,7 +82,7 @@ app.notFound((c) =>
 
 app.onError((err, c) => {
   console.error(err);
-  if (c.req.path.startsWith('/api/')) return c.json({ ok: false, error: 'Błąd serwera — spróbuj ponownie.' }, 500);
+  if (c.req.path.startsWith('/api/')) return c.json({ ok: false, error: 'Błąd serwera. Spróbuj ponownie.' }, 500);
   return c.html(
     <Layout title="Błąd" user={c.var.user ?? null}>
       <section class="section">

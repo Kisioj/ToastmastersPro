@@ -92,9 +92,9 @@ a opcja „Tylko te osoby mają mieć dostęp” dezaktywuje członków spoza li
 
 ### Ocena AI — co wybrać
 
-- **Workers AI** (domyślnie, `AI_PROVIDER=workers-ai`): darmowe, bez dodatkowego konta. Model Llama 4 Scout
-  radzi sobie z oczywistymi problemami (brak logo, złe czcionki, za dużo tekstu), ale ocena trwa 30–90 s
-  i bywa powierzchowna.
+- **Workers AI** (domyślnie, `AI_PROVIDER=workers-ai`): darmowe, bez dodatkowego konta ani klucza (działa w ramach
+  konta Cloudflare, limit 10 000 „neuronów” dziennie, czyli kilkadziesiąt ocen). Model Mistral Small 3.1: ocena
+  w ok. 13 s. Zmierzone alternatywy: Qwen 3.8 (ok. 42 s, dokładniejsze uwagi), Llama 4 Scout (ok. 116 s).
 - **Claude** (`AI_PROVIDER=claude` w `wrangler.jsonc` + `npx wrangler secret put ANTHROPIC_API_KEY`):
   wyraźnie trafniejsza ocena projektów graficznych. Płatne za użycie: domyślny `claude-opus-5-5` to ok.
   5–10 groszy amerykańskich za ocenę, a `CLAUDE_MODEL=claude-haiku-5-5` około 40× taniej.

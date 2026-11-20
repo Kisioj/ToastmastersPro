@@ -15,7 +15,7 @@ document.addEventListener('click', async (e) => {
     const msg = data.sent
       ? `Wysłano maila na ${btn.dataset.email}. Link (ważny 14 dni) możesz też przesłać sam:`
       : data.mode === 'off'
-        ? 'Maile są wyłączone — skopiuj link i wyślij go tej osobie (ważny 14 dni):'
+        ? 'Maile są wyłączone. Skopiuj link i wyślij go tej osobie (ważny 14 dni):'
         : `Mail nie wyszedł (${data.error}). Skopiuj link i wyślij go ręcznie:`;
     const wrap = document.createElement('div');
     wrap.className = 'link-out';

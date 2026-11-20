@@ -53,7 +53,7 @@ async function post(url, body) {
   try {
     data = await res.json();
   } catch {
-    throw new Error('Błąd połączenia — spróbuj ponownie.');
+    throw new Error('Błąd połączenia. Spróbuj ponownie.');
   }
   if (!data.ok) throw new Error(data.error || 'Nie udało się zapisać.');
   return data;
@@ -278,7 +278,7 @@ function renderRanking(root, m) {
     poolNodes.delete(id);
     syncButtons();
     (nextPick || rankList.lastElementChild.querySelector('button')).focus({ preventScroll: true });
-    say(`${title(id)} — miejsce ${order.length}.`);
+    say(`${title(id)}: miejsce ${order.length}.`);
   }
   function unrank(id) {
     const i = order.indexOf(id);
@@ -308,7 +308,7 @@ function renderRanking(root, m) {
     li.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     const target = btn.disabled ? (dir < 0 ? li._btns.down : li._btns.up) : btn;
     target.focus({ preventScroll: true });
-    say(`${title(id)} — teraz miejsce ${j + 1} z ${order.length}.`);
+    say(`${title(id)}: teraz miejsce ${j + 1} z ${order.length}.`);
   }
 
   for (const id of order) {
@@ -418,7 +418,7 @@ function renderPoints(root, m) {
   );
   const { row, status } = saveButton(D.ballots[m] ? 'Zmień głos' : 'Zapisz punkty', (btn) => {
     const l = left();
-    if (l !== 0) return setStatus(status, false, `Rozdaj dokładnie ${budget} pkt — zostało ${l}.`);
+    if (l !== 0) return setStatus(status, false, `Rozdaj dokładnie ${budget} pkt (zostało ${l}).`);
     saveBallot(m, { points: Object.fromEntries(Object.entries(pts).filter(([, v]) => v > 0)) }, btn, status);
   });
   paint();
@@ -490,7 +490,7 @@ function renderDuel(root, m) {
     current = pick();
     paintMeta();
     if (!current) {
-      arena.replaceChildren(h('p', { class: 'empty-note', style: 'grid-column:1/-1', text: 'Porównano wszystkie pary — dziękujemy! 🎉 Wynik zapisuje się na bieżąco.' }));
+      arena.replaceChildren(h('p', { class: 'empty-note', style: 'grid-column:1/-1', text: 'Porównano wszystkie pary, dziękujemy! 🎉 Wynik zapisuje się na bieżąco.' }));
       skipBtn.hidden = true;
       return;
     }

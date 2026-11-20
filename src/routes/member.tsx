@@ -28,7 +28,7 @@ member.get('/', async (c) => {
   const votedSet = new Set(voted.map((v) => v.contest_id));
   return c.html(
     <Layout title="Konkursy" user={user} flash={takeFlash(c)} nav="home">
-      <PageHead eyebrow={`Cześć, ${firstName(user.name, user.email)}!`} title="Konkursy klubowe" lead="Tu głosujemy i zbieramy projekty. Każdy członek klubu ma jeden głos — możesz go zmieniać do końca głosowania." />
+      <PageHead eyebrow={`Cześć, ${firstName(user.name, user.email)}!`} title="Konkursy klubowe" lead="Tu głosujemy i zbieramy projekty. Każdy członek klubu ma jeden głos, który możesz zmieniać do końca głosowania." />
       <section class="section tight">
         <div class="wrap">
           {contests.length === 0 ? (
@@ -103,7 +103,7 @@ member.get('/konkursy/:slug', async (c) => {
       ? (
           await db
             .prepare(
-              `SELECT e.*, COALESCE(NULLIF(u.name, ''), u.email, '—') AS author FROM entries e LEFT JOIN users u ON u.id = e.author_id
+              `SELECT e.*, COALESCE(NULLIF(u.name, ''), u.email, '-') AS author FROM entries e LEFT JOIN users u ON u.id = e.author_id
                WHERE e.contest_id = ? AND e.upload_complete = 1 ORDER BY e.created_at DESC`,
             )
             .bind(contest.id)
@@ -137,7 +137,7 @@ member.get('/konkursy/:slug', async (c) => {
             <h2>
               Wszystkie zgłoszenia ({allSubs.length}) <span class="pill">{user.role === 'admin' ? 'widok admina' : 'widok opiekuna'}</span>
             </h2>
-            <p class="muted">Członkowie widzą tylko własne projekty, a w głosowaniu — same projekty, bez nazwisk autorów.</p>
+            <p class="muted">Członkowie widzą tylko własne projekty, a w głosowaniu same projekty, bez nazwisk autorów.</p>
             {allSubs.length === 0 ? (
               <p class="empty-note">Nikt jeszcze nie wysłał projektu.</p>
             ) : (
@@ -175,11 +175,11 @@ member.get('/konkursy/:slug', async (c) => {
       {showVoting && (
         <section class="section tight">
           <div class="wrap mid">
-            {contest.phase === 'draft' && <p class="callout">Podgląd dla zarządzających — konkurs jest w szkicu, członkowie go nie widzą.</p>}
+            {contest.phase === 'draft' && <p class="callout">Podgląd dla zarządzających: konkurs jest w szkicu, członkowie go nie widzą.</p>}
             {testMode && (
               <div class="callout" style="margin-bottom:20px">
                 <p>
-                  <strong>Tryb testowy.</strong> Nie zdecydowaliśmy jeszcze, jak głosować. Wypróbuj każdy sposób (zakładki poniżej) — głosy w każdej
+                  <strong>Tryb testowy.</strong> Nie zdecydowaliśmy jeszcze, jak głosować. Wypróbuj każdy sposób (zakładki poniżej). Głosy w każdej
                   zakładce liczą się osobno. Na dole strony powiedz nam, który sposób najbardziej Ci odpowiada.
                 </p>
               </div>
@@ -238,7 +238,7 @@ member.get('/konkursy/:slug', async (c) => {
                     <label class="check">
                       <input type="radio" name="preferred" value={m} required checked={feedback?.preferred === m} />
                       <span>
-                        <strong>{METHODS[m].name}</strong> <span class="hint">— {METHODS[m].pros}</span>
+                        <strong>{METHODS[m].name}</strong> <span class="hint">{METHODS[m].pros}</span>
                       </span>
                     </label>
                   ))}
@@ -318,17 +318,17 @@ const RollupSubmit = ({ contest, user, mySubs, aiOn, storeOn }: { contest: Conte
           <h2>Wymagania techniczne</h2>
           <ul class="spec">
             <li>
-              Wymiar rollupu: <strong>{s.width_mm / 10} × {s.height_mm / 10} cm</strong> (pion). Plik w skali 1:1 albo 1:10 — sprawdzimy proporcje.
+              Wymiar rollupu: <strong>{s.width_mm / 10} × {s.height_mm / 10} cm</strong> (pion). Plik w skali 1:1 albo 1:10, sprawdzimy proporcje.
             </li>
             <li>
               Najlepiej <strong>PDF</strong> (wektorowy, z osadzonymi czcionkami lub tekstem zamienionym na krzywe). Przyjmujemy też SVG, JPG, PNG i
               WebP.
             </li>
             <li>
-              Zdjęcia i grafiki rastrowe: min. <strong>100 DPI</strong> w skali 1:1 (zalecane 150 DPI) — czyli np. JPG co najmniej{' '}
+              Zdjęcia i grafiki rastrowe: min. <strong>100 DPI</strong> w skali 1:1 (zalecane 150 DPI), czyli np. JPG co najmniej{' '}
               {Math.round((s.width_mm / 25.4) * 100)} × {Math.round((s.height_mm / 25.4) * 100)} px.
             </li>
-            <li>Dolne ~10 cm chowa się w kasecie stojaka — nie umieszczaj tam ważnych treści. Zostaw ~3 cm marginesu po bokach.</li>
+            <li>Dolne ~10 cm chowa się w kasecie stojaka, więc nie umieszczaj tam ważnych treści. Zostaw ~3 cm marginesu po bokach.</li>
             <li>
               Zgodność z <a href="https://content.toastmasters.org/image/upload/02330-001-0001-brand-manual.pdf">Brand Manualem Toastmasters</a>:
               oficjalne logo bez zmian, kolory Loyal Blue #004165 i True Maroon #772432 (akcenty: Cool Gray #A9B2B1, Happy Yellow #F2DF74), czcionki
@@ -341,7 +341,7 @@ const RollupSubmit = ({ contest, user, mySubs, aiOn, storeOn }: { contest: Conte
         </div>
 
         {!storeOn ? (
-          <p class="flash err">Przechowywanie plików nie jest skonfigurowane — daj znać adminowi.</p>
+          <p class="flash err">Przechowywanie plików nie jest skonfigurowane. Daj znać adminowi.</p>
         ) : limitReached ? (
           <p class="callout">Wysłałeś(-aś) już maksymalną liczbę projektów ({s.max_entries}). Możesz usunąć któryś poniżej i wysłać nowy.</p>
         ) : (

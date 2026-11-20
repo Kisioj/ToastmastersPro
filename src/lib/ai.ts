@@ -4,7 +4,7 @@ import { now } from './util';
 /**
  * Ocena projektu rollupu pod kątem Brand Manuala Toastmasters International (v2.0, rev. 08/2026).
  * Dwa silniki:
- *  - "workers-ai" — darmowe Workers AI (model wizyjny Llama 4 Scout), bez dodatkowych kont,
+ *  - "workers-ai" — darmowe Workers AI (model wizyjny Mistral Small 3.1), bez dodatkowych kont,
  *  - "claude"     — Claude API (płatne za użycie, wyraźnie lepsza ocena; wymaga sekretu ANTHROPIC_API_KEY).
  * Twarde parametry techniczne (DPI, wymiary, czcionki) liczy przeglądarka — AI dostaje je jako raport.
  */
@@ -29,21 +29,28 @@ export interface AiReview {
 const SYSTEM = `You review roll-up banner designs (85 × 200 cm) submitted to a design contest of the Toastmasters Częstochowa club (Poland). Assess (1) compliance with the Toastmasters International Brand Manual (v2.0, rev. 08/2026) and (2) how well the design works as a roll-up seen from 1–3 m. Write ALL output text in Polish: concise, specific, constructive, addressed directly to the designer.
 
 BRAND RULES
-- Colors: primary Loyal Blue #004165 and True Maroon #772432 should dominate (backgrounds, large areas). Secondary accents: Cool Gray #A9B2B1, Happy Yellow #F2DF74 (highlights). The only allowed gradients: Loyal Blue #004165 ↔ Blissful Blue #006094; Deep Maroon #3B0104 ↔ Rich Maroon #781327; Cool Gray #A9B2B1 ↔ Fair Gray #F5F5F5. White overlays at ~70% opacity are fine. Other dominant colors or other gradients are not compliant.
-- Logo: the official Toastmasters International logo, unmodified — no perspective, stretching, disproportionate scaling, recoloring, changed element proportions, glow, busy or patterned background behind it, no text/images overlapping it. Clear space around it at least equal to the wordmark height. Clubs must NOT create their own logo. The club name ("Toastmasters Częstochowa") may appear as text, e.g. below the logo.
+- Colors: primary Loyal Blue #004165 and True Maroon #772432 should dominate (backgrounds, large areas). Secondary accents: Cool Gray #A9B2B1, Happy Yellow #F2DF74 (highlights). The only allowed gradients: Loyal Blue #004165 ↔ Blissful Blue #006094; Deep Maroon #3B0104 ↔ Rich Maroon #781327; Cool Gray #A9B2B1 ↔ Fair Gray #F5F5F5. White overlays at ~70% opacity are fine. These colors are a RECOMMENDATION of the club: other dominant colors or gradients get status "uwaga", never "blad".
+- Logo: the official Toastmasters International logo, unmodified: no perspective, stretching, disproportionate scaling, recoloring, changed element proportions, glow, busy or patterned background behind it, no text/images overlapping it. Clear space around it at least equal to the wordmark height (recommendation). Clubs must NOT create their own logo. The club name ("Toastmasters Częstochowa") may appear as text, e.g. below the logo.
 - Typography: headlines in Gotham (free alternative: Montserrat), body copy in Myriad Pro (free alternative: Source Sans 3); Arial / Segoe UI acceptable for body. No word art, drop shadows, heavy outlines or distorted type.
-- Tagline: "Where Leaders Are Made" in Title Case or ALL CAPS. Approved phrases (one per piece): Find Your Voice; Relax, present confidently.; Relax, speak confidently.; Communicate Confidently®; More than 100 Years of Confident Voices; Over a Century of Communication Excellence; Find your confidence; Become a better leader; Invest in a Brighter Future. The manual says clubs may not create their own taglines — if a Polish slogan or club motto is used, mark it "uwaga" (needs a club decision), not "blad".
+- Tagline: "Where Leaders Are Made" in Title Case or ALL CAPS. Approved phrases (one per piece): Find Your Voice; Relax, present confidently.; Relax, speak confidently.; Communicate Confidently®; More than 100 Years of Confident Voices; Over a Century of Communication Excellence; Find your confidence; Become a better leader; Invest in a Brighter Future. The manual says clubs may not create their own taglines; if a Polish slogan or club motto is used, mark it "uwaga" (needs a club decision), not "blad".
 - Photography: real people engaged in Toastmasters situations (speaking, meetings, contests, networking). Avoid landscapes, animals, children, food, medicine or architecture as the main subject. Cartoons, illustrations and clip art only as secondary elements. A logo placed on a photo needs good contrast, must not cover faces, ideally top-left or bottom-right.
 - Contrast: text must contrast strongly with its background.
 
 ROLL-UP PRACTICE
 - Logo and the main message in the upper half (eye level). Nothing important within ~3 cm of the side edges or in the bottom ~10 cm (hidden by the stand base).
-- Headline readable from 3 m (letters roughly 6–8 cm tall or more on the real banner). Little text — a roll-up is not a flyer.
+- Headline readable from 3 m (letters roughly 6–8 cm tall or more on the real banner). Little text, a roll-up is not a flyer.
 - Contact info (website, socials, QR code at least 3 × 3 cm) is a plus.
 
-You receive a downscaled preview (proportions preserved) and an automatic technical report (physical size, effective DPI, fonts, color shares). Trust the report for resolution and size — never judge DPI from the preview. Judge only what is visible; say when unsure.
+You receive a downscaled preview (proportions preserved) and an automatic technical report (physical size, effective DPI, fonts, color shares). Trust the report for resolution and size; never judge DPI from the preview. Judge only what is visible; say when unsure.
 
-Return JSON only with: verdict ("zgodny" = ready to print, "drobne_poprawki" = small fixes, "wymaga_zmian" = significant problems), score (integer 0–100), summary (2–3 sentences), checks (5–8 items covering: Kolory, Logo, Typografia, Hasło/tagline, Zdjęcia i grafika, Czytelność z daleka, Układ na rollupie, Kontrast — status "ok" | "uwaga" | "blad"), suggestions (up to 5 concrete fixes, most important first).`;
+SEVERITY POLICY (decided by the club, follow it strictly):
+- "blad" is allowed ONLY in the "Logo" check, and only when the official Toastmasters logo is modified (stretched, squeezed, recolored, rotated or in perspective, elements changed, glow or shadow added) or a custom/unofficial logo is used instead of it.
+- Everything else is a recommendation and gets at most "uwaga": colors and gradients, logo clear space, size, placement and background, a missing logo, typography, tagline, photos, layout, legibility and contrast.
+- verdict: "zgodny" = no "uwaga" and no "blad"; "drobne_poprawki" = only recommendations ("uwaga"); "wymaga_zmian" = at least one "blad".
+
+STYLE: plain Polish sentences. Never use the em dash character (—); use commas, colons or full stops instead.
+
+Return JSON only with: verdict, score (integer 0–100), summary (2–3 sentences), checks (5–8 items covering: Kolory, Logo, Typografia, Hasło/tagline, Zdjęcia i grafika, Czytelność z daleka, Układ na rollupie, Kontrast; status "ok" | "uwaga" | "blad"), suggestions (up to 5 concrete fixes, most important first).`;
 
 const SCHEMA = {
   type: 'object',
@@ -97,12 +104,20 @@ function normalize(raw: unknown, provider: string, model: string): AiReview {
       status: (statuses.includes(c.status as never) ? c.status : 'uwaga') as AiCheck['status'],
       comment: String(c.comment).slice(0, 600),
     }));
+  // tylko „Logo” może mieć błąd (zmodyfikowane / nieoficjalne logo); reszta to zalecenia
+  for (const ch of checks) if (ch.status === 'blad' && !/logo/i.test(ch.area)) ch.status = 'uwaga';
   const suggestions = (Array.isArray(r.suggestions) ? r.suggestions : [])
     .filter((s): s is string => typeof s === 'string')
     .slice(0, 6)
     .map((s) => s.slice(0, 400));
-  return { verdict, score, summary: String(r.summary ?? '').slice(0, 1200), checks, suggestions, provider, model, created_at: now() };
+  // werdykt wynika z punktów kontroli, a nie z deklaracji modelu
+  const derived: AiReview['verdict'] = checks.some((ch) => ch.status === 'blad') ? 'wymaga_zmian' : checks.some((ch) => ch.status === 'uwaga') ? 'drobne_poprawki' : checks.length ? 'zgodny' : verdict;
+  for (const ch of checks) ch.comment = noDash(ch.comment);
+  return { verdict: derived, score, summary: noDash(String(r.summary ?? '').slice(0, 1200)), checks, suggestions: suggestions.map(noDash), provider, model, created_at: now() };
 }
+
+/** Bez długich myślników w tekstach na stronie */
+const noDash = (t: string) => t.replace(/\s*—\s*/g, ' - ');
 
 /** Wyciąga pierwszy obiekt JSON z odpowiedzi modelu (Workers AI nie zawsze trzyma się formatu) */
 function extractJson(text: string): unknown {
@@ -144,7 +159,7 @@ async function viaClaude(env: Env, imageB64: string, userText: string): Promise<
     return normalize(JSON.parse(text), 'claude', msg.model ?? model);
   } catch (e) {
     if (e instanceof Anthropic.AuthenticationError) throw new Error('Nieprawidłowy klucz ANTHROPIC_API_KEY.');
-    if (e instanceof Anthropic.RateLimitError) throw new Error('Za dużo zapytań do Claude — spróbuj za chwilę.');
+    if (e instanceof Anthropic.RateLimitError) throw new Error('Za dużo zapytań do Claude. Spróbuj za chwilę.');
     if (e instanceof Anthropic.BadRequestError) throw new Error(`Claude odrzucił zapytanie: ${e.message}`);
     if (e instanceof Anthropic.APIError) throw new Error(`Błąd Claude API (${e.status}): ${e.message}`);
     throw e;
@@ -152,7 +167,7 @@ async function viaClaude(env: Env, imageB64: string, userText: string): Promise<
 }
 
 async function viaWorkersAi(env: Env, imageB64: string, userText: string): Promise<AiReview> {
-  const model = env.WORKERS_AI_MODEL || '@cf/meta/llama-4-scout-17b-16e-instruct';
+  const model = env.WORKERS_AI_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct';
   const shape =
     '\n\nRespond with ONE JSON object and nothing else, exactly in this shape: {"verdict":"zgodny|drobne_poprawki|wymaga_zmian","score":0-100,"summary":"...","checks":[{"area":"Kolory","status":"ok|uwaga|blad","comment":"..."}],"suggestions":["..."]}';
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

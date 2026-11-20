@@ -148,26 +148,26 @@ function sizeChecks(wMM, hMM, checks, { knownPhysical = true } = {}) {
       title: `Wymiar w pliku: ${fmt(wMM / 10, 1)} × ${fmt(hMM / 10, 1)} cm (${label})`,
       detail: std
         ? `Po przeskalowaniu: ${fmt(realW / 10, 1)} × ${fmt(realH / 10, 1)} cm.`
-        : `Szerokość nie pasuje do ${W / 10} cm ani do skali 1:10 — drukarnia przeskaluje plik, upewnij się, że to zamierzone.`,
+        : `Szerokość nie pasuje do ${W / 10} cm ani do skali 1:10. Drukarnia przeskaluje plik, upewnij się, że to zamierzone.`,
     });
   }
   if (ratio < expected * 0.985) {
     checks.push({
       level: 'err',
-      title: 'Złe proporcje — projekt jest za niski',
+      title: 'Złe proporcje: projekt jest za niski',
       detail: `Proporcje ${fmt(1, 0)} : ${fmt(ratio, 2)}, a rollup ${W / 10} × ${H / 10} cm to 1 : ${fmt(expected, 2)}. Po rozciągnięciu na szerokość ${W / 10} cm wysokość wyniosłaby ${fmt((ratio * W) / 10, 1)} cm.`,
     });
   } else if (ratio > ((H + 150) / W) * 1.01) {
     checks.push({
       level: 'err',
-      title: 'Złe proporcje — projekt jest za wysoki',
+      title: 'Złe proporcje: projekt jest za wysoki',
       detail: `Po dopasowaniu do szerokości ${W / 10} cm wysokość wyniosłaby ${fmt((ratio * W) / 10, 1)} cm zamiast ${H / 10} cm.`,
     });
   } else if (ratio > expected * 1.015) {
     checks.push({
       level: 'info',
       title: `Projekt jest wyższy niż ${H / 10} cm (${fmt((ratio * W) / 10, 1)} cm)`,
-      detail: 'To w porządku, jeśli to zapas na kasetę stojaka albo spady — ale sprawdź wymagania drukarni.',
+      detail: 'To w porządku, jeśli to zapas na kasetę stojaka albo spady, ale sprawdź wymagania drukarni.',
     });
   } else {
     checks.push({ level: 'ok', title: 'Proporcje pasują do rollupu', detail: `1 : ${fmt(ratio, 3)} (rollup: 1 : ${fmt(expected, 3)}).` });
@@ -183,8 +183,8 @@ function dpiLevel(dpi) {
 }
 function dpiText(dpi) {
   if (dpi >= 150) return 'świetna jakość';
-  if (dpi >= 100) return 'wystarczy na rollup oglądany z 1–3 m';
-  if (dpi >= 72) return 'słabo — z bliska widać piksele';
+  if (dpi >= 100) return 'wystarczy na rollup oglądany z 1-3 m';
+  if (dpi >= 72) return 'słabo, z bliska widać piksele';
   return 'za mała rozdzielczość, wydruk będzie rozmazany';
 }
 
@@ -215,7 +215,7 @@ async function analyzePdf(file, checks) {
   });
   const doc = await task.promise;
   try {
-    if (doc.numPages > 1) checks.push({ level: 'warn', title: `Plik ma ${doc.numPages} strony`, detail: 'Rollup to jedna strona — sprawdzamy tylko pierwszą.' });
+    if (doc.numPages > 1) checks.push({ level: 'warn', title: `Plik ma ${doc.numPages} strony`, detail: 'Rollup to jedna strona, sprawdzamy tylko pierwszą.' });
     const page = await doc.getPage(1);
     const [x0, y0, x1, y1] = page.view;
     const uu = page.userUnit || 1;
@@ -259,7 +259,7 @@ async function analyzePdf(file, checks) {
     }
     const relevant = images.filter((im) => im.area >= 0.005);
     if (!relevant.length) {
-      checks.push({ level: 'ok', title: 'Brak zdjęć/grafik rastrowych', detail: 'Projekt jest wektorowy — wydrukuje się ostro w każdym rozmiarze.' });
+      checks.push({ level: 'ok', title: 'Brak zdjęć/grafik rastrowych', detail: 'Projekt jest wektorowy, wydrukuje się ostro w każdym rozmiarze.' });
     } else {
       relevant.sort((a, b) => a.dpi - b.dpi);
       const big = relevant.filter((im) => im.area >= 0.15);
@@ -350,7 +350,7 @@ async function analyzeSvg(file, checks) {
   vbW ??= wMM;
   vbH ??= hMM;
   const size = sizeChecks(wMM, hMM, checks, { knownPhysical: physical });
-  if (!physical) checks.push({ level: 'info', title: 'SVG bez jednostek fizycznych', detail: 'To grafika wektorowa — rozmiar nie ma znaczenia, liczą się proporcje.' });
+  if (!physical) checks.push({ level: 'info', title: 'SVG bez jednostek fizycznych', detail: 'To grafika wektorowa: rozmiar nie ma znaczenia, liczą się proporcje.' });
 
   const texts = svg.querySelectorAll('text');
   if (texts.length) {
@@ -369,7 +369,7 @@ async function analyzeSvg(file, checks) {
   for (const im of imgs) {
     const href = im.getAttribute('href') || im.getAttributeNS('http://www.w3.org/1999/xlink', 'href') || '';
     if (!href.startsWith('data:')) {
-      checks.push({ level: 'err', title: 'Obraz podlinkowany, nieosadzony', detail: `„${href.slice(0, 60)}” nie trafi do drukarni — osadź obraz w pliku.` });
+      checks.push({ level: 'err', title: 'Obraz podlinkowany, nieosadzony', detail: `„${href.slice(0, 60)}” nie trafi do drukarni. Osadź obraz w pliku.` });
       continue;
     }
     try {
@@ -381,7 +381,7 @@ async function analyzeSvg(file, checks) {
     } catch {}
   }
   if (minDpi !== null) {
-    checks.push({ level: dpiLevel(minDpi), title: `Osadzone obrazy: najniższa rozdzielczość ${Math.round(minDpi)} DPI`, detail: `W skali 1:1: ${dpiText(minDpi)}. (Szacunek — bez uwzględnienia transformacji.)` });
+    checks.push({ level: dpiLevel(minDpi), title: `Osadzone obrazy: najniższa rozdzielczość ${Math.round(minDpi)} DPI`, detail: `W skali 1:1: ${dpiText(minDpi)}. (Szacunek, bez uwzględnienia transformacji.)` });
   } else if (!imgs.length) {
     checks.push({ level: 'ok', title: 'Brak grafik rastrowych', detail: 'Projekt w pełni wektorowy.' });
   }
@@ -433,7 +433,7 @@ async function analyzeRaster(file, checks) {
   const W = CFG.settings.width_mm;
   const H = CFG.settings.height_mm;
   sizeChecks(pxW, pxH, checks, { knownPhysical: false });
-  checks.unshift({ level: 'info', title: `Obraz ${pxW} × ${pxH} px (${fmtMB(file.size)})`, detail: 'Grafika rastrowa — liczy się liczba pikseli na wymiar rollupu.' });
+  checks.unshift({ level: 'info', title: `Obraz ${pxW} × ${pxH} px (${fmtMB(file.size)})`, detail: 'Grafika rastrowa: liczy się liczba pikseli na wymiar rollupu.' });
   const dpi = Math.min(pxW / (W / 25.4), pxH / (H / 25.4));
   checks.push({
     level: dpiLevel(dpi),
@@ -443,7 +443,7 @@ async function analyzeRaster(file, checks) {
   if (file.type === 'image/jpeg') {
     const info = await jpegInfo(file);
     if (info?.components === 4) checks.push({ level: 'ok', title: 'JPEG w CMYK', detail: 'Gotowy do druku offsetowego/wielkoformatowego.' });
-    else checks.push({ level: 'info', title: 'JPEG w RGB', detail: 'Drukarnia przekonwertuje do CMYK — kolory mogą się minimalnie zmienić.' });
+    else checks.push({ level: 'info', title: 'JPEG w RGB', detail: 'Drukarnia przekonwertuje do CMYK, kolory mogą się minimalnie zmienić.' });
   }
   if (file.type === 'image/png' || file.type === 'image/webp') {
     checks.push({ level: 'info', title: 'Format ekranowy', detail: 'PNG/WebP są OK, ale drukarnie wolą PDF albo JPG/TIFF w CMYK.' });
@@ -465,7 +465,7 @@ async function analyze(file) {
     file.type ||
     (name.endsWith('.pdf') ? 'application/pdf' : name.endsWith('.svg') ? 'image/svg+xml' : name.match(/\.jpe?g$/) ? 'image/jpeg' : name.endsWith('.png') ? 'image/png' : name.endsWith('.webp') ? 'image/webp' : '');
   const maxBytes = CFG.settings.max_mb * 1024 * 1024;
-  if (file.size > maxBytes) throw new Error(`Plik ma ${fmtMB(file.size)} — maksymalnie ${CFG.settings.max_mb} MB.`);
+  if (file.size > maxBytes) throw new Error(`Plik ma ${fmtMB(file.size)}, a limit to ${CFG.settings.max_mb} MB.`);
   let result;
   if (type === 'application/pdf') result = await analyzePdf(file, checks);
   else if (type === 'image/svg+xml') result = await analyzeSvg(file, checks);
@@ -478,12 +478,13 @@ async function analyze(file) {
   const brandPct = Math.round(colors.brandShare * 100);
   const otherPct = Math.round(colors.otherShare * 100);
   checks.push({
-    level: colors.brandShare >= 0.25 ? 'ok' : otherPct > 50 ? 'warn' : 'info',
+    // kolory marki to zalecenie (decyzja klubu): co najwyżej ostrzeżenie, nigdy błąd
+    level: colors.brandShare >= 0.25 ? 'ok' : 'warn',
     title: `Kolory marki: ${brandPct}% powierzchni`,
     detail:
       `Neutralne (biel, czerń, szarości): ${Math.round(colors.neutralShare * 100)}%, inne: ${otherPct}%. ` +
       (colors.brandShare < 0.25
-        ? 'Brand manual zaleca, by dominowały Loyal Blue #004165 i True Maroon #772432 (zdjęcia mogą mieć dowolne kolory).'
+        ? 'Zalecenie brand manualu: niech dominują Loyal Blue #004165 i True Maroon #772432 (zdjęcia mogą mieć dowolne kolory). To tylko zalecenie, nie blokuje wysłania.'
         : 'Paleta wygląda na zgodną z marką.'),
   });
   const order = { err: 0, warn: 1, info: 2, ok: 3 };
@@ -555,7 +556,7 @@ function render(box, file, { report, canvas, type }, previewBlob) {
   const status = h('p', { class: 'status-line', role: 'status' });
   const progWrap = h('div', { class: 'upload-progress', hidden: true }, h('label', { for: 'up-prog', text: 'Wysyłanie…' }), h('progress', { id: 'up-prog', max: file.size, value: 0 }));
   const aiBox = h('div', { class: 'card', hidden: true, style: 'margin-top:16px' });
-  const override = report.verdict === 'err' ? h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'override' }), h('span', { text: 'Wiem, że projekt ma błędy techniczne — chcę go wysłać mimo to (np. jako wstępną wersję).' })) : null;
+  const override = report.verdict === 'err' ? h('label', { class: 'check' }, h('input', { type: 'checkbox', id: 'override' }), h('span', { text: 'Wiem, że projekt ma błędy techniczne, ale chcę go wysłać mimo to (np. jako wstępną wersję).' })) : null;
   const sendBtn = h('button', { type: 'submit', class: 'btn', text: 'Wyślij projekt' });
   const aiBtn = CFG.aiOn ? h('button', { type: 'button', class: 'btn ghost', text: 'Sprawdź zgodność z brand manualem (AI)' }) : null;
   const previewUrl = URL.createObjectURL(previewBlob);
@@ -586,12 +587,12 @@ function render(box, file, { report, canvas, type }, previewBlob) {
     if (aiBtn.getAttribute('aria-disabled') === 'true') return;
     aiBtn.setAttribute('aria-disabled', 'true');
     aiBox.hidden = false;
-    aiBox.replaceChildren(h('p', { class: 'muted', text: 'AI ocenia projekt… to zwykle trwa 30–90 sekund.' }), h('progress', { 'aria-label': 'Trwa ocena AI', style: 'width:100%' }));
+    aiBox.replaceChildren(h('p', { class: 'muted', text: 'AI ocenia projekt, zwykle trwa to kilkanaście sekund.' }), h('progress', { 'aria-label': 'Trwa ocena AI', style: 'width:100%' }));
     try {
       const data = await postJson('/api/ocena-ai', { image: await blobToBase64(previewBlob), title: titleInput.value, report });
       const wrap = h('div');
       wrap.innerHTML = data.html; // HTML wyrenderowany i escapowany po stronie serwera
-      aiBox.replaceChildren(h('h3', { text: 'Ocena AI (podgląd — niezapisana)' }), wrap);
+      aiBox.replaceChildren(h('h3', { text: 'Ocena AI (podgląd, niezapisana)' }), wrap);
     } catch (err) {
       aiBox.replaceChildren(h('p', { class: 'flash err', text: err.message }));
     } finally {

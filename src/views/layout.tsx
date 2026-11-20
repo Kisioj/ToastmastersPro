@@ -8,7 +8,7 @@ import { METHODS } from '../lib/voting';
 import { PHASES } from '../lib/contests';
 
 /** Zmień przy zmianach w /public, żeby przeglądarki pobrały nowe pliki */
-export const ASSET_V = '3';
+export const ASSET_V = '5';
 
 interface LayoutProps {
   title: string;
@@ -37,7 +37,7 @@ export const Layout: FC<LayoutProps> = ({ title, user, flash, scripts = [], nav,
       </a>
       <header class="top">
         <div class="wrap">
-          <a class="brand" href="/" aria-label="Strefa członka — strona główna">
+          <a class="brand" href="/" aria-label="Strefa członka, strona główna">
             <img src="/img/logo.webp" width="340" height="74" alt="Toastmasters Częstochowa" />
           </a>
           <span class="zone">Strefa członka</span>

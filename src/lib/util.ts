@@ -69,7 +69,7 @@ export function safeJson<T>(s: string | null | undefined, fallback: T): T {
 }
 
 export function fmtDate(ts: number | null | undefined): string {
-  if (!ts) return '—';
+  if (!ts) return '-';
   return new Date(ts * 1000).toLocaleString('pl-PL', {
     timeZone: 'Europe/Warsaw',
     day: 'numeric',
@@ -84,7 +84,7 @@ export function fmtNum(n: number, digits = 1): string {
 }
 
 export function fmtSize(bytes: number | null | undefined): string {
-  if (!bytes) return '—';
+  if (!bytes) return '-';
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
   return `${fmtNum(bytes / 1024 / 1024)} MB`;
 }

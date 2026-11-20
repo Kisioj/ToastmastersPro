@@ -22,8 +22,8 @@ export const VERDICT_TECH = {
 
 export const VERDICT_AI = {
   zgodny: { cls: 'ok', text: 'Zgodny z brand manualem' },
-  drobne_poprawki: { cls: 'warn', text: 'Drobne poprawki' },
-  wymaga_zmian: { cls: 'err', text: 'Wymaga zmian' },
+  drobne_poprawki: { cls: 'warn', text: 'Zgodny, są zalecenia' },
+  wymaga_zmian: { cls: 'err', text: 'Logo wymaga poprawy' },
 } as const;
 
 export const TechReportView: FC<{ report: TechReport | null }> = ({ report }) => {
@@ -119,7 +119,7 @@ export const AiReviewView: FC<{ review: AiReview | null; error?: string | null }
         </div>
       )}
       <p class="muted small" style="margin:0">
-        Ocena AI jest pomocnicza — ostateczną decyzję podejmuje klub. Pełne zasady:{' '}
+        Ocena AI jest pomocnicza, ostateczną decyzję podejmuje klub. Pełne zasady:{' '}
         <a href="https://content.toastmasters.org/image/upload/02330-001-0001-brand-manual.pdf">Brand Manual Toastmasters</a>.
       </p>
     </div>

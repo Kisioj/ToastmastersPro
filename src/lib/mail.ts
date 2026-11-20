@@ -46,10 +46,10 @@ export async function mailAllowed(env: Env, to: string): Promise<{ ok: true } | 
   const lastAt = last.results[0]?.v ?? 0;
   if (lastAt && t - lastAt < MAIL_COOLDOWN) {
     const retryIn = MAIL_COOLDOWN - (t - lastAt);
-    return { ok: false, reason: `Na ten adres wysłaliśmy maila przed chwilą — kolejny możliwy za ${Math.ceil(retryIn / 60)} min.`, retryIn };
+    return { ok: false, reason: `Na ten adres wysłaliśmy maila przed chwilą. Kolejny możliwy za ${Math.ceil(retryIn / 60)} min.`, retryIn };
   }
   if ((day.results[0]?.v ?? 0) >= mailDailyLimit(env))
-    return { ok: false, reason: `Osiągnięto dzienny limit ${mailDailyLimit(env)} maili — spróbuj jutro.` };
+    return { ok: false, reason: `Osiągnięto dzienny limit ${mailDailyLimit(env)} maili. Spróbuj jutro.` };
   return { ok: true };
 }
 
@@ -121,13 +121,13 @@ export function inviteMail(name: string, link: string) {
   const hi = name ? `Cześć ${esc(name)}!` : 'Cześć!';
   return {
     subject: 'Zaproszenie do strefy członka Toastmasters Częstochowa',
-    text: `${hi.replace(/&[^;]+;/g, '')}\n\nTwój adres został dodany do strefy członka klubu Toastmasters Częstochowa — znajdziesz tam m.in. konkursy klubowe i głosowania.\n\nUstaw swoje hasło (link jest ważny 14 dni):\n${link}\n\nPotem możesz logować się mailem i hasłem albo samym mailem — wtedy wyślemy Ci link do logowania.\n\nDo zobaczenia na spotkaniu!\nToastmasters Częstochowa`,
+    text: `${hi.replace(/&[^;]+;/g, '')}\n\nTwój adres został dodany do strefy członka klubu Toastmasters Częstochowa. Znajdziesz tam m.in. konkursy klubowe i głosowania.\n\nUstaw swoje hasło (link jest ważny 14 dni):\n${link}\n\nPotem możesz logować się mailem i hasłem albo samym mailem (wtedy wyślemy Ci link do logowania).\n\nDo zobaczenia na spotkaniu!\nToastmasters Częstochowa`,
     html: wrapHtml(
       'Zaproszenie do strefy członka',
       [
         hi,
-        'Twój adres został dodany do <strong>strefy członka klubu Toastmasters Częstochowa</strong> — znajdziesz tam m.in. konkursy klubowe i głosowania.',
-        'Kliknij poniżej, żeby ustawić swoje hasło. Potem możesz logować się mailem i hasłem albo samym mailem — wtedy wyślemy Ci link do logowania.',
+        'Twój adres został dodany do <strong>strefy członka klubu Toastmasters Częstochowa</strong>. Znajdziesz tam m.in. konkursy klubowe i głosowania.',
+        'Kliknij poniżej, żeby ustawić swoje hasło. Potem możesz logować się mailem i hasłem albo samym mailem (wtedy wyślemy Ci link do logowania).',
       ],
       { label: 'Ustaw hasło', url: link },
       'Link jest ważny 14 dni i działa tylko raz. Jeśli nie spodziewałeś(-aś) się tej wiadomości, po prostu ją zignoruj.',
@@ -137,13 +137,13 @@ export function inviteMail(name: string, link: string) {
 
 export function loginMail(link: string) {
   return {
-    subject: 'Link do logowania — Toastmasters Częstochowa',
-    text: `Ktoś (pewnie Ty) poprosił o link do logowania w strefie członka Toastmasters Częstochowa.\n\nZaloguj się (link ważny 20 minut, działa raz):\n${link}\n\nJeśli to nie Ty — zignoruj tę wiadomość.`,
+    subject: 'Toastmasters Częstochowa: link do logowania',
+    text: `Ktoś (pewnie Ty) poprosił o link do logowania w strefie członka Toastmasters Częstochowa.\n\nZaloguj się (link ważny 20 minut, działa raz):\n${link}\n\nJeśli to nie Ty, zignoruj tę wiadomość.`,
     html: wrapHtml(
       'Twój link do logowania',
       ['Ktoś (pewnie Ty) poprosił o link do logowania w strefie członka Toastmasters Częstochowa.'],
       { label: 'Zaloguj się', url: link },
-      'Link jest ważny 20 minut i działa tylko raz. Jeśli to nie Ty — zignoruj tę wiadomość.',
+      'Link jest ważny 20 minut i działa tylko raz. Jeśli to nie Ty, zignoruj tę wiadomość.',
     ),
   };
 }

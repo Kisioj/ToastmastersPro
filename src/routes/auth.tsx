@@ -115,7 +115,7 @@ auth.post('/logowanie/link', async (c) => {
             Nie widzisz maila? Zajrzyj do folderu „Spam” lub „Oferty”. Kolejny link możemy wysłać najwcześniej 5 minut po poprzednim.
           </p>
           {mailOff && !devLink && (
-            <p class="callout">Wysyłka maili nie jest jeszcze skonfigurowana — poproś admina o link do logowania.</p>
+            <p class="callout">Wysyłka maili nie jest jeszcze skonfigurowana. Poproś admina o link do logowania.</p>
           )}
           {devLink && (
             <p class="callout blue">

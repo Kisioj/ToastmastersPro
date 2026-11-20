@@ -20,7 +20,7 @@ const INVITE_BATCH = 8;
 
 /** Tylko admin systemu: członkowie, maile, tworzenie i usuwanie konkursów, przydzielanie opiekunów */
 const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
-  if (c.var.user?.role !== 'admin') return c.text('Brak dostępu — to tylko dla admina systemu.', 403);
+  if (c.var.user?.role !== 'admin') return c.text('Brak dostępu. To tylko dla admina systemu.', 403);
   await next();
 };
 
@@ -194,7 +194,7 @@ admin.get('/', requireAdmin, async (c) => {
                 Dodaj osoby albo wklej całą listę członków
                 <span class="hint">
                   Jedna osoba w linii: „Anna Nowak &lt;anna@example.com&gt;”, „anna@example.com, Anna Nowak” albo sam adres. Możesz też wkleić wiersze
-                  skopiowane z Excela / Arkuszy Google lub wczytać plik CSV — wyłapiemy adresy i imiona. Przed zapisem pokażemy podgląd.
+                  skopiowane z Excela / Arkuszy Google lub wczytać plik CSV, a wyłapiemy adresy i imiona. Przed zapisem pokażemy podgląd.
                 </span>
                 <textarea id="members" name="members" rows={5} required spellcheck={false}></textarea>
               </label>
@@ -225,7 +225,7 @@ admin.get('/', requireAdmin, async (c) => {
                     return (
                       <tr id={`u-${u.id}`}>
                         <th>
-                          {u.name || '—'} {u.role === 'admin' && <span class="pill">admin</span>}
+                          {u.name || '-'} {u.role === 'admin' && <span class="pill">admin</span>}
                           <span class="sub">{u.email}</span>
                         </th>
                         <td data-label="Status">
@@ -286,7 +286,7 @@ admin.post('/czlonkowie/podglad', requireAdmin, async (c) => {
   const listed = new Set(people.map((p) => p.email));
   const rows = people.map((p) => {
     const u = byEmail.get(p.email);
-    const status = !u ? 'Nowa osoba' : !u.active ? 'Zostanie aktywowana' : p.name && p.name !== u.name ? `Już jest (imię: ${u.name || '—'} → ${p.name})` : 'Już jest';
+    const status = !u ? 'Nowa osoba' : !u.active ? 'Zostanie aktywowana' : p.name && p.name !== u.name ? `Już jest (imię: ${u.name || '-'} → ${p.name})` : 'Już jest';
     return { ...p, status, cls: !u ? 'ok' : !u.active ? 'warn' : '' };
   });
   const missing = users.filter((u) => u.active && u.role !== 'admin' && !listed.has(u.email));
@@ -296,7 +296,7 @@ admin.post('/czlonkowie/podglad', requireAdmin, async (c) => {
 
   return c.html(
     <Layout title="Podgląd importu" user={c.var.user} nav="admin" scripts={['/js/app.js']}>
-      <PageHead eyebrow="Panel admina · członkowie" title="Podgląd importu" lead={`Znaleziono ${people.length} ${plural(people.length, 'adres', 'adresy', 'adresów')}, w tym ${newCount} ${plural(newCount, 'nową osobę', 'nowe osoby', 'nowych osób')}. Sprawdź imiona — popraw je później w tabeli albo wklej listę jeszcze raz.`} />
+      <PageHead eyebrow="Panel admina · członkowie" title="Podgląd importu" lead={`Znaleziono ${people.length} ${plural(people.length, 'adres', 'adresy', 'adresów')}, w tym ${newCount} ${plural(newCount, 'nową osobę', 'nowe osoby', 'nowych osób')}. Sprawdź imiona: popraw je później w tabeli albo wklej listę jeszcze raz.`} />
       <section class="section tight">
         <div class="wrap stack" style="--gap:24px">
           <div class="table-wrapper" tabindex={0} role="region" aria-labelledby="imp-cap">
@@ -312,7 +312,7 @@ admin.post('/czlonkowie/podglad', requireAdmin, async (c) => {
               <tbody>
                 {rows.map((r) => (
                   <tr>
-                    <th>{r.name || <span class="muted">— brak imienia —</span>}</th>
+                    <th>{r.name || <span class="muted">(brak imienia)</span>}</th>
                     <td data-label="E-mail">{r.email}</td>
                     <td data-label="Co się stanie">{r.cls ? <span class={`pill ${r.cls}`}>{r.status}</span> : <span class="muted">{r.status}</span>}</td>
                   </tr>
@@ -328,14 +328,14 @@ admin.post('/czlonkowie/podglad', requireAdmin, async (c) => {
               <input type="checkbox" name="invite" value="1" checked={mailOn} disabled={!mailOn} />
               <span>
                 Wyślij nowym osobom zaproszenie z linkiem do ustawienia hasła
-                {mailOn ? ' (maks. 6 od razu — resztę jednym przyciskiem nad tabelą)' : ' — maile są wyłączone, linki skopiujesz z tabeli'}
+                {mailOn ? ' (maks. 6 od razu, resztę wyślesz przyciskiem nad tabelą)' : ' (maile są wyłączone, linki skopiujesz z tabeli)'}
               </span>
             </label>
             {missing.length > 0 && (
               <label class="check">
                 <input type="checkbox" name="sync" value="1" />
                 <span>
-                  <strong>Tylko te osoby mają mieć dostęp</strong> — dezaktywuj {missing.length} {plural(missing.length, 'osobę', 'osoby', 'osób')} spoza tej listy:{' '}
+                  <strong>Tylko te osoby mają mieć dostęp</strong>: dezaktywuj {missing.length} {plural(missing.length, 'osobę', 'osoby', 'osób')} spoza tej listy:{' '}
                   {missing.map((u) => u.name || u.email).join(', ')}. Admini nie są ruszani, a dezaktywowane konta można przywrócić.
                 </span>
               </label>
@@ -406,7 +406,7 @@ admin.post('/czlonkowie', requireAdmin, async (c) => {
   if (deactivated) parts.push(`dezaktywowano ${deactivated} spoza listy`);
   if (sent) parts.push(`wysłano ${sent} ${plural(sent, 'zaproszenie', 'zaproszenia', 'zaproszeń')}`);
   if (blocked) parts.push(`${blocked} zaproszeń wstrzymał limit wysyłki`);
-  if (failed) parts.push(`${failed} maili nie wyszło — sprawdź ustawienia SMTP`);
+  if (failed) parts.push(`${failed} maili nie wyszło, sprawdź ustawienia SMTP`);
   if (fresh.length > 6 && f.invite) parts.push('resztę zaproszeń wyślij przyciskiem „Wyślij zaproszenia niezaproszonym”');
   setFlash(c, failed ? 'err' : 'ok', `${parts.join(', ')}.`);
   return c.redirect('/admin');
@@ -430,7 +430,7 @@ admin.post('/czlonkowie/zaproszenia', requireAdmin, async (c) => {
   }
   const left = todo.length - sent;
   const msg = [`Wysłano ${sent} ${plural(sent, 'zaproszenie', 'zaproszenia', 'zaproszeń')}`];
-  if (left > 0) msg.push(`zostało ${left} — kliknij przycisk jeszcze raz`);
+  if (left > 0) msg.push(`zostało ${left}, kliknij przycisk jeszcze raz`);
   if (problems.length) msg.push(`problemy: ${problems.slice(0, 3).join('; ')}`);
   setFlash(c, problems.length ? 'err' : 'ok', `${msg.join(', ')}.`);
   return c.redirect('/admin');
@@ -465,7 +465,7 @@ admin.post('/mail-test', requireAdmin, async (c) => {
   const u = c.var.user!;
   const r = await sendMail(c.env, {
     to: u.email,
-    subject: 'Test wysyłki — strefa członka',
+    subject: 'Test wysyłki ze strefy członka',
     text: 'Jeśli to czytasz, wysyłka maili działa.',
     html: '<p>Jeśli to czytasz, wysyłka maili działa. ✅</p>',
   });
@@ -484,7 +484,7 @@ const ContestForm = ({ contest, action }: { contest: Partial<Contest> & { method
         <input type="text" id="title" name="title" value={contest.title ?? ''} required maxlength={120} />
       </label>
       <label for="slug">
-        Adres <span class="hint">/konkursy/… — zostaw puste, utworzymy z tytułu</span>
+        Adres <span class="hint">/konkursy/… (zostaw puste, utworzymy z tytułu)</span>
         <input type="text" id="slug" name="slug" value={contest.slug ?? ''} pattern="[a-z0-9-]*" maxlength={60} spellcheck={false} />
       </label>
       <label for="description">
@@ -497,11 +497,11 @@ const ContestForm = ({ contest, action }: { contest: Partial<Contest> & { method
         <legend>Rodzaj</legend>
         <label class="check">
           <input type="radio" name="kind" value="text" checked={(contest.kind ?? 'text') === 'text'} />
-          <span>Teksty (np. hasła) — propozycje dodaje admin</span>
+          <span>Teksty (np. hasła), propozycje dodaje admin</span>
         </label>
         <label class="check">
           <input type="radio" name="kind" value="rollup" checked={contest.kind === 'rollup'} />
-          <span>Projekty graficzne (rollup) — członkowie wysyłają pliki, system je sprawdza</span>
+          <span>Projekty graficzne (rollup): członkowie wysyłają pliki, system je sprawdza</span>
         </label>
       </fieldset>
       <label for="phase">
@@ -516,12 +516,12 @@ const ContestForm = ({ contest, action }: { contest: Partial<Contest> & { method
       </label>
       <fieldset>
         <legend>Sposoby głosowania</legend>
-        <p class="hint" style="margin:0">Zaznacz jeden — to oficjalne głosowanie. Zaznacz kilka — członkowie przetestują każdy i powiedzą, który wolą (tryb testowy).</p>
+        <p class="hint" style="margin:0">Zaznacz jeden: to oficjalne głosowanie. Zaznacz kilka: członkowie przetestują każdy i powiedzą, który wolą (tryb testowy).</p>
         {METHOD_IDS.map((m) => (
           <label class="check">
             <input type="checkbox" name="methods" value={m} checked={contest.methods.includes(m)} />
             <span>
-              <strong>{METHODS[m].name}</strong> <span class="hint">— {METHODS[m].tagline}</span>
+              <strong>{METHODS[m].name}</strong> <span class="hint">{METHODS[m].tagline}</span>
             </span>
           </label>
         ))}
@@ -618,7 +618,7 @@ admin.post('/konkursy', requireAdmin, async (c) => {
     setFlash(c, 'ok', 'Konkurs utworzony. Dodaj propozycje poniżej.');
     return c.redirect(`/admin/konkursy/${row!.id}`);
   } catch {
-    setFlash(c, 'err', `Adres /konkursy/${v.slug} jest już zajęty — wpisz inny.`);
+    setFlash(c, 'err', `Adres /konkursy/${v.slug} jest już zajęty, wpisz inny.`);
     return c.redirect('/admin/konkursy/nowy');
   }
 });
@@ -698,7 +698,7 @@ admin.get('/konkursy/:id', async (c) => {
                   <tbody>
                     {shownMethods.map((m) => {
                       const t = tallies[m]!;
-                      const lead = t.voters ? t.rows.filter((r) => r.rank === 1).map((r) => r.title).join(' / ') : '—';
+                      const lead = t.voters ? t.rows.filter((r) => r.rank === 1).map((r) => r.title).join(' / ') : '-';
                       return (
                         <tr>
                           <th>
@@ -729,7 +729,7 @@ admin.get('/konkursy/:id', async (c) => {
                   {feedback.map((f) => (
                     <li>
                       <strong>{f.name || f.email}</strong> woli: {isMethod(f.preferred) ? METHODS[f.preferred].name : f.preferred}
-                      {f.comment && <span class="muted"> — „{f.comment}”</span>}
+                      {f.comment && <span class="muted">: „{f.comment}”</span>}
                     </li>
                   ))}
                 </ul>
@@ -742,7 +742,7 @@ admin.get('/konkursy/:id', async (c) => {
             {contest.kind === 'text' && (
               <form class="form card" method="post" action={`/admin/konkursy/${contest.id}/propozycje`} style="margin-bottom:16px">
                 <label for="new-entries">
-                  Dodaj propozycje — jedna w linii
+                  Dodaj propozycje, jedna w linii
                   <span class="hint">Numeracja na początku linii („1.”, „2)”) zostanie usunięta.</span>
                   <textarea id="new-entries" name="entries" rows={4} required></textarea>
                 </label>
@@ -835,7 +835,7 @@ admin.get('/konkursy/:id', async (c) => {
               członków ani innych konkursów.
             </p>
             {managers.length === 0 ? (
-              <p class="empty-note">Brak opiekunów — konkursem zarządza tylko admin systemu.</p>
+              <p class="empty-note">Brak opiekunów. Konkursem zarządza tylko admin systemu.</p>
             ) : (
               <ul class="stack" style="--gap:8px;padding:0;list-style:none;margin:0 0 12px">
                 {managers.map((m) => (
@@ -863,7 +863,7 @@ admin.get('/konkursy/:id', async (c) => {
                   Osoba
                 </label>
                 <select id="new-manager" name="user_id" required style="min-block-size:40px;border-radius:8px;font:inherit;padding:4px 8px;max-width:100%">
-                  <option value="">— wybierz osobę —</option>
+                  <option value="">Wybierz osobę</option>
                   {candidates
                     .filter((u) => !managers.some((m) => m.id === u.id))
                     .map((u) => (
