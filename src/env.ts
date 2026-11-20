@@ -44,7 +44,7 @@ export interface ContestRow {
   slug: string;
   title: string;
   description: string;
-  kind: 'text' | 'rollup';
+  kind: 'text' | 'rollup' | 'leaderboard';
   phase: Phase;
   methods: string;
   results: ResultsMode;
@@ -65,6 +65,9 @@ export interface ContestSettings {
   max_entries?: number;
   /** maks. rozmiar pliku w MB (rollup) */
   max_mb?: number;
+  /** okres konkursu (RRRR-MM-DD), pokazywany na stronie */
+  period_start?: string;
+  period_end?: string;
   /** wymiary docelowe w mm (rollup) */
   width_mm?: number;
   height_mm?: number;

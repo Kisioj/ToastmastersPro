@@ -108,8 +108,10 @@ document.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-ai-run]');
   if (!btn || btn.getAttribute('aria-disabled') === 'true') return;
   const id = btn.dataset.aiRun;
-  const status = document.querySelector(`[data-ai-status="${id}"]`);
-  const box = document.querySelector(`[data-ai-box="${id}"]`);
+  // ta sama karta może być na stronie dwa razy (Twoje zgłoszenia + widok admina) — szukamy w obrębie karty
+  const card = btn.closest('article') ?? document;
+  const status = card.querySelector('[data-ai-status]');
+  const box = card.querySelector('[data-ai-box]');
   btn.setAttribute('aria-disabled', 'true');
   btn.classList.add('busy');
   if (status) {

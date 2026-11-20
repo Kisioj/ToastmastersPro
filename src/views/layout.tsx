@@ -8,7 +8,7 @@ import { METHODS } from '../lib/voting';
 import { PHASES } from '../lib/contests';
 
 /** Zmień przy zmianach w /public, żeby przeglądarki pobrały nowe pliki */
-export const ASSET_V = '5';
+export const ASSET_V = '7';
 
 interface LayoutProps {
   title: string;
@@ -98,8 +98,11 @@ export const PageHead: FC<{ eyebrow?: string; title: string; lead?: string; chil
   </section>
 );
 
-export const PhasePill: FC<{ phase: keyof typeof PHASES }> = ({ phase }) => (
-  <span class={`pill ${phase}`}>{phase === 'draft' ? 'Szkic' : PHASES[phase]}</span>
+/** Ranking (np. goście) nie ma zgłoszeń ani głosowania — po prostu „trwa” */
+export const PhasePill: FC<{ phase: keyof typeof PHASES; kind?: string }> = ({ phase, kind }) => (
+  <span class={`pill ${phase}`}>
+    {phase === 'draft' ? 'Szkic' : kind === 'leaderboard' && phase !== 'closed' ? 'Trwa' : PHASES[phase]}
+  </span>
 );
 
 /** Dane dla skryptów: <script type="application/json"> */

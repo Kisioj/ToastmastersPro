@@ -21,6 +21,10 @@ i konkurs na projekt rollupu z automatycznym sprawdzaniem plików. Działa w ca�
   Pliki do 95 MB są wysyłane w kawałkach po 20 MB.
 - Panel admina: członkowie (zaproszenia, role, dezaktywacja), konkursy (etapy, sposoby głosowania,
   widoczność wyników), propozycje, zgłoszenia, wyniki, zerowanie głosów.
+- **Rankingi** (np. „kto przyprowadzi najwięcej gości”): zasady, okres i tabela dla wszystkich; zarządzający
+  dodają gości (kto przyprowadził, opcjonalnie imię gościa i data), ranking liczy się sam.
+- **Powiadomienia mailowe per konkurs**: „ruszyło głosowanie”, „można wysyłać zgłoszenia”, „wyniki” (treść
+  podpowiadana według etapu, do edycji). Jeden mail w ukrytej kopii do wszystkich aktywnych członków.
 
 ## Role
 

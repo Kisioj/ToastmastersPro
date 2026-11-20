@@ -108,3 +108,29 @@ export function canSeeResults(contest: Contest, user: User, votedInMethod: boole
 export function isTestMode(contest: Contest): boolean {
   return contest.methods.length > 1;
 }
+
+export interface LeaderRow {
+  user_id: number;
+  name: string;
+  guests: number;
+  rank: number;
+}
+
+/** Ranking „kto przyprowadził najwięcej gości” — liczony z rejestru wizyt */
+export async function leaderboard(db: D1Database, contestId: number): Promise<LeaderRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT v.user_id, COALESCE(NULLIF(u.name, ''), u.email) AS name, COUNT(*) AS guests
+       FROM guest_visits v JOIN users u ON u.id = v.user_id
+       WHERE v.contest_id = ? GROUP BY v.user_id ORDER BY guests DESC, name`,
+    )
+    .bind(contestId)
+    .all<{ user_id: number; name: string; guests: number }>();
+  let rank = 0;
+  let prev = -1;
+  return results.map((r, i) => {
+    if (r.guests !== prev) rank = i + 1;
+    prev = r.guests;
+    return { ...r, rank };
+  });
+}

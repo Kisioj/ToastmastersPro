@@ -5,10 +5,10 @@ import { aiProvider } from '../lib/ai';
 import { createToken, linkFor } from '../lib/auth';
 import { canManage, computeTallies, getContest, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS } from '../lib/contests';
 import { setFlash, takeFlash } from '../lib/flash';
-import { inviteMail, mailAllowed, mailConfigured, mailDailyLimit, mailsSentLast24h, sendMail } from '../lib/mail';
+import { announcementMail, inviteMail, mailAllowed, mailConfigured, mailDailyLimit, mailsSentLast24h, sendAnnouncement, sendMail } from '../lib/mail';
 import { parseMemberLines } from '../lib/members';
 import { deleteParts, getStore } from '../lib/storage';
-import { fmtDate, now, slugify } from '../lib/util';
+import { fmtDate, fmtDay, now, slugify } from '../lib/util';
 import { isMethod, METHOD_IDS, METHODS, plural, type MethodId } from '../lib/voting';
 import { Layout, PageHead, PhasePill, ResultsList } from '../views/layout';
 import { SubmissionCard } from './member';
@@ -28,6 +28,29 @@ const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
 async function guardContest(c: Context<AppEnv>, contestId: number): Promise<Response | null> {
   if (!Number.isInteger(contestId) || !(await canManage(c.env.DB, c.var.user!, contestId))) return c.text('Brak dostępu do tego konkursu.', 403);
   return null;
+}
+
+/** Domyślna treść powiadomienia zależnie od rodzaju i etapu konkursu (bez długich myślników) */
+function announcementTemplate(ct: Contest): { subject: string; message: string } | null {
+  if (ct.phase === 'draft') return null;
+  const until = ct.settings.period_end ? ` Zgłoszenia przyjmujemy do ${fmtDay(ct.settings.period_end)}.` : '';
+  if (ct.kind === 'leaderboard')
+    return { subject: `${ct.title}: sprawdź ranking`, message: `Trwa konkurs „${ct.title}”. Zasady i aktualny ranking znajdziesz w strefie członka.` };
+  if (ct.phase === 'submissions')
+    return ct.kind === 'rollup'
+      ? {
+          subject: `${ct.title}: można wysyłać zgłoszenia`,
+          message: `Ruszyły zgłoszenia w konkursie „${ct.title}”. Zaloguj się do strefy członka i wyślij swój projekt. System od razu sprawdzi, czy plik nadaje się do druku i czy pasuje do zasad marki Toastmasters.${until}`,
+        }
+      : { subject: `${ct.title}: zbieramy propozycje`, message: `Zbieramy propozycje w konkursie „${ct.title}”. Szczegóły znajdziesz w strefie członka.` };
+  if (ct.phase === 'voting')
+    return {
+      subject: `${ct.title}: ruszyło głosowanie`,
+      message: `Możesz już głosować w konkursie „${ct.title}”. Głos możesz zmieniać do końca głosowania.${
+        ct.methods.length > 1 ? '\n\nTym razem możesz wypróbować kilka sposobów głosowania i powiedzieć nam, który jest najlepszy.' : ''
+      }`,
+    };
+  return { subject: `${ct.title}: wyniki`, message: `Konkurs „${ct.title}” jest zakończony. Wyniki znajdziesz w strefie członka.` };
 }
 
 function memberStatus(u: User): { cls: string; text: string } {
@@ -154,9 +177,9 @@ admin.get('/', requireAdmin, async (c) => {
                           <span class="sub">/konkursy/{ct.slug}</span>
                         </th>
                         <td data-label="Etap">
-                          <PhasePill phase={ct.phase} />
+                          <PhasePill phase={ct.phase} kind={ct.kind} />
                         </td>
-                        <td data-label="Głosowanie">{ct.methods.length > 1 ? `Tryb testowy: ${ct.methods.length} sposoby` : METHODS[ct.methods[0] as MethodId].name}</td>
+                        <td data-label="Głosowanie">{ct.kind === 'leaderboard' ? 'Ranking gości' : ct.methods.length > 1 ? `Tryb testowy: ${ct.methods.length} sposoby` : METHODS[ct.methods[0] as MethodId].name}</td>
                         <td class="actions-cell">
                           <a class="btn small" href={`/admin/konkursy/${ct.id}`}>
                             Zarządzaj
@@ -503,15 +526,21 @@ const ContestForm = ({ contest, action }: { contest: Partial<Contest> & { method
           <input type="radio" name="kind" value="rollup" checked={contest.kind === 'rollup'} />
           <span>Projekty graficzne (rollup): członkowie wysyłają pliki, system je sprawdza</span>
         </label>
+        <label class="check">
+          <input type="radio" name="kind" value="leaderboard" checked={contest.kind === 'leaderboard'} />
+          <span>Ranking (np. kto przyprowadzi najwięcej gości): zasady i tabela, wpisy dodają zarządzający</span>
+        </label>
       </fieldset>
       <label for="phase">
         Etap
         <select id="phase" name="phase">
-          {Object.entries(PHASES).map(([k, v]) => (
-            <option value={k} selected={(contest.phase ?? 'draft') === k}>
-              {v}
-            </option>
-          ))}
+          {Object.entries(PHASES)
+            .filter(([k]) => !(contest.kind === 'leaderboard' && k === 'voting'))
+            .map(([k, v]) => (
+              <option value={k} selected={(contest.phase ?? 'draft') === k || (contest.kind === 'leaderboard' && k === 'submissions' && contest.phase === 'voting')}>
+                {contest.kind === 'leaderboard' && k === 'submissions' ? 'Trwa' : v}
+              </option>
+            ))}
         </select>
       </label>
       <fieldset>
@@ -549,6 +578,14 @@ const ContestForm = ({ contest, action }: { contest: Partial<Contest> & { method
           Maks. MB na plik
           <input type="number" id="max_mb" name="max_mb" min={1} max={95} value={s.max_mb} />
         </label>
+        <label for="period_start">
+          Okres od <span class="hint">opcjonalnie</span>
+          <input type="date" id="period_start" name="period_start" value={s.period_start ?? ''} />
+        </label>
+        <label for="period_end">
+          Okres do <span class="hint">opcjonalnie</span>
+          <input type="date" id="period_end" name="period_end" value={s.period_end ?? ''} />
+        </label>
         <label for="position">
           Kolejność na liście
           <input type="number" id="position" name="position" value={contest.position ?? 0} />
@@ -576,7 +613,7 @@ function readContestForm(f: Record<string, string | File | (string | File)[]>) {
     title: one('title').trim().slice(0, 120),
     slug: slugify(one('slug') || one('title')),
     description: one('description').trim().slice(0, 3000),
-    kind: one('kind') === 'rollup' ? 'rollup' : 'text',
+    kind: ['rollup', 'leaderboard'].includes(one('kind')) ? one('kind') : 'text',
     phase: (Object.keys(PHASES) as string[]).includes(one('phase')) ? one('phase') : 'draft',
     results: (Object.keys(RESULTS_MODES) as string[]).includes(one('results')) ? one('results') : 'after_vote',
     methods: JSON.stringify(methods.length ? methods : ['top3']),
@@ -584,6 +621,8 @@ function readContestForm(f: Record<string, string | File | (string | File)[]>) {
       points_budget: int('points_budget', 10, 3, 100),
       max_entries: int('max_entries', 3, 1, 20),
       max_mb: int('max_mb', 95, 1, 95),
+      ...(/^\d{4}-\d{2}-\d{2}$/.test(one('period_start')) ? { period_start: one('period_start') } : {}),
+      ...(/^\d{4}-\d{2}-\d{2}$/.test(one('period_end')) ? { period_end: one('period_end') } : {}),
     }),
     position: int('position', 0, -1000, 1000),
   };
@@ -630,6 +669,16 @@ admin.get('/konkursy/:id', async (c) => {
   const denied = await guardContest(c, contest.id);
   if (denied) return denied;
   const isAdmin = c.var.user!.role === 'admin';
+  const tpl = announcementTemplate(contest);
+  const mailOn = mailConfigured(c.env);
+  const activeCount = (await db.prepare('SELECT COUNT(*) AS n FROM users WHERE active = 1').first<{ n: number }>())?.n ?? 0;
+  const { results: announcements } = await db
+    .prepare(
+      `SELECT a.phase, a.subject, a.recipients, a.skipped, a.created_at, COALESCE(NULLIF(u.name, ''), u.email) AS by_name
+       FROM contest_announcements a LEFT JOIN users u ON u.id = a.sent_by WHERE a.contest_id = ? ORDER BY a.created_at DESC LIMIT 5`,
+    )
+    .bind(contest.id)
+    .all<{ phase: string; subject: string; recipients: number; skipped: number; created_at: number; by_name: string | null }>();
   const { results: managers } = await db
     .prepare('SELECT u.id, u.name, u.email FROM contest_managers m JOIN users u ON u.id = m.user_id WHERE m.contest_id = ? ORDER BY u.name, u.email')
     .bind(contest.id)
@@ -670,7 +719,7 @@ admin.get('/konkursy/:id', async (c) => {
     <Layout title={contest.title} user={c.var.user} flash={takeFlash(c)} scripts={['/js/app.js']} nav={isAdmin ? 'admin' : 'home'}>
       <PageHead eyebrow={isAdmin ? 'Panel admina · konkurs' : 'Zarządzanie konkursem'} title={contest.title}>
         <p class="row" style="margin:12px 0 0">
-          <PhasePill phase={contest.phase} />
+          <PhasePill phase={contest.phase} kind={contest.kind} />
           <a class="btn ghost small" href={`/konkursy/${contest.slug}`}>
             Otwórz stronę konkursu
           </a>
@@ -681,6 +730,12 @@ admin.get('/konkursy/:id', async (c) => {
       </PageHead>
       <section class="section tight">
         <div class="wrap stack" style="--gap:40px">
+          {contest.kind === 'leaderboard' ? (
+            <p class="callout blue">
+              Ranking i rejestr gości są na <a href={`/konkursy/${contest.slug}`}>stronie konkursu</a>: tam dodajesz gości i widzisz tabelę.
+            </p>
+          ) : (
+            <>
           <div>
             <h2>Wyniki</h2>
             {shownMethods.length > 1 && (
@@ -828,6 +883,61 @@ admin.get('/konkursy/:id', async (c) => {
             )}
           </div>
 
+            </>
+          )}
+
+          <div class="card">
+            <h2>Powiadom klubowiczów</h2>
+            {!mailOn ? (
+              <p class="muted">Wysyłka maili jest wyłączona.</p>
+            ) : !tpl ? (
+              <p class="muted">Konkurs jest w szkicu. Członkowie go nie widzą, więc nie ma jeszcze o czym powiadamiać.</p>
+            ) : (
+              <form
+                class="form"
+                method="post"
+                action={`/admin/konkursy/${contest.id}/powiadom`}
+                data-confirm={`Wysłać maila do ${activeCount} ${plural(activeCount, 'osoby', 'osób', 'osób')}?${
+                  announcements.some((a) => a.phase === contest.phase) ? ' Uwaga: na tym etapie powiadomienie już raz poszło.' : ''
+                }`}
+              >
+                <p class="hint" style="margin:0">
+                  Jeden mail do wszystkich aktywnych członków ({activeCount}) w ukrytej kopii, więc nikt nie widzi adresów innych osób. Link do konkursu i
+                  podpowiedź, jak się zalogować, dodamy sami. Treść możesz poprawić przed wysłaniem.
+                </p>
+                <label for="ann-subject">
+                  Temat
+                  <input type="text" id="ann-subject" name="subject" value={tpl.subject} maxlength={150} required />
+                </label>
+                <label for="ann-message">
+                  Treść
+                  <textarea id="ann-message" name="message" rows={5} maxlength={2000} required>
+                    {tpl.message}
+                  </textarea>
+                </label>
+                <button class="btn" type="submit" style="justify-self:start">
+                  Wyślij do {activeCount} {plural(activeCount, 'osoby', 'osób', 'osób')}
+                </button>
+              </form>
+            )}
+            {announcements.length > 0 && (
+              <div style="margin-top:18px">
+                <p class="small" style="margin:0 0 6px">
+                  <b>Wysłane powiadomienia</b>
+                </p>
+                <ul class="small muted" style="margin:0;padding-left:1.2em">
+                  {announcements.map((a) => (
+                    <li>
+                      {fmtDate(a.created_at)}: „{a.subject}”, {a.recipients} {plural(a.recipients, 'osoba', 'osoby', 'osób')}
+                      {a.skipped ? `, pominięto ${a.skipped}` : ''}
+                      {a.by_name ? `, wysłał(a): ${a.by_name}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
           <div class="card">
             <h2>Opiekunowie konkursu</h2>
             <p class="muted">
@@ -934,17 +1044,58 @@ admin.post('/konkursy/:id', async (c) => {
     setFlash(c, 'err', 'Podaj tytuł.');
     return c.redirect(`/admin/konkursy/${id}`);
   }
+  const before = await getContest(c.env.DB, id);
   try {
     await c.env.DB.prepare(
       'UPDATE contests SET slug = ?, title = ?, description = ?, kind = ?, phase = ?, methods = ?, results = ?, settings = ?, position = ? WHERE id = ?',
     )
       .bind(v.slug, v.title, v.description, v.kind, v.phase, v.methods, v.results, v.settings, v.position, id)
       .run();
-    setFlash(c, 'ok', 'Zapisano ustawienia.');
+    const phaseChanged = before && before.phase !== v.phase && v.phase !== 'draft';
+    setFlash(c, 'ok', phaseChanged ? 'Zapisano. Etap się zmienił: możesz powiadomić klubowiczów mailem (sekcja „Powiadom klubowiczów” niżej).' : 'Zapisano ustawienia.');
   } catch {
     setFlash(c, 'err', `Adres /konkursy/${v.slug} jest już zajęty.`);
   }
   return c.redirect(`/admin/konkursy/${id}`);
+});
+
+admin.post('/konkursy/:id/powiadom', async (c) => {
+  const id = Number(c.req.param('id'));
+  const denied = await guardContest(c, id);
+  if (denied) return denied;
+  const db = c.env.DB;
+  const contest = await getContest(db, id);
+  if (!contest) return c.notFound();
+  const back = `/admin/konkursy/${id}`;
+  if (contest.phase === 'draft') {
+    setFlash(c, 'err', 'Konkurs jest w szkicu, członkowie go nie widzą.');
+    return c.redirect(back);
+  }
+  const f = await c.req.parseBody();
+  const subject = String(f.subject ?? '').trim().replace(/\s*—\s*/g, ' - ').slice(0, 150);
+  const message = String(f.message ?? '').trim().replace(/\s*—\s*/g, ' - ').slice(0, 2000);
+  if (!subject || !message) {
+    setFlash(c, 'err', 'Podaj temat i treść.');
+    return c.redirect(back);
+  }
+  const { results } = await db.prepare('SELECT email FROM users WHERE active = 1').all<{ email: string }>();
+  const link = `${new URL(c.req.url).origin}/konkursy/${contest.slug}`;
+  const r = await sendAnnouncement(c.env, results.map((u) => u.email), announcementMail(subject, message, link));
+  if (r.sent) {
+    await db
+      .prepare('INSERT INTO contest_announcements (contest_id, phase, subject, recipients, skipped, sent_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .bind(id, contest.phase, subject, r.sent, r.skipped, c.var.user!.id, now())
+      .run();
+  }
+  if (r.sent) {
+    const extra = [r.skipped ? `pominięto ${r.skipped} (dostali maila przed chwilą, wyślij im później)` : '', r.error ? `część się nie udała: ${r.error}` : '']
+      .filter(Boolean)
+      .join(', ');
+    setFlash(c, r.error ? 'err' : 'ok', `Wysłano powiadomienie do ${r.sent} ${plural(r.sent, 'osoby', 'osób', 'osób')}${extra ? `, ${extra}` : ''}.`);
+  } else {
+    setFlash(c, 'err', r.error ?? 'Nie udało się wysłać.');
+  }
+  return c.redirect(back);
 });
 
 admin.post('/konkursy/:id/propozycje', async (c) => {

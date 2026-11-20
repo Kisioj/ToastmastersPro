@@ -39,7 +39,7 @@ export async function mailAllowed(env: Env, to: string): Promise<{ ok: true } | 
   const t = now();
   const [member, last, day] = await env.DB.batch<{ v: number | null }>([
     env.DB.prepare('SELECT 1 AS v FROM users WHERE email = ? AND active = 1').bind(email),
-    env.DB.prepare("SELECT MAX(created_at) AS v FROM mail_log WHERE to_email = ? AND status IN ('sent', 'error')").bind(email),
+    env.DB.prepare("SELECT MAX(created_at) AS v FROM mail_log WHERE to_email = ? AND status = 'sent'").bind(email),
     env.DB.prepare("SELECT COUNT(*) AS v FROM mail_log WHERE status = 'sent' AND created_at > ?").bind(t - 86400),
   ]);
   if (!member.results.length) return { ok: false, reason: 'Ten adres nie jest na liście aktywnych członków.' };
@@ -145,5 +145,73 @@ export function loginMail(link: string) {
       { label: 'Zaloguj się', url: link },
       'Link jest ważny 20 minut i działa tylko raz. Jeśli to nie Ty, zignoruj tę wiadomość.',
     ),
+  };
+}
+
+/**
+ * Powiadomienie do wielu członków naraz: jeden mail w ukrytej kopii (BCC), adresowany do skrzynki klubu.
+ * Jedno połączenie SMTP na 90 odbiorców, więc mieści się w limicie podżądań darmowego planu.
+ * Pomija osoby, które dostały maila w ostatnich 5 minutach, i pilnuje dziennego limitu.
+ */
+export async function sendAnnouncement(
+  env: Env,
+  emails: string[],
+  msg: { subject: string; text: string; html: string },
+): Promise<{ sent: number; skipped: number; error?: string }> {
+  if (!mailConfigured(env)) return { sent: 0, skipped: emails.length, error: 'Wysyłka maili jest wyłączona.' };
+  const t = now();
+  const [recent, day] = await env.DB.batch<{ v: string | number }>([
+    env.DB.prepare("SELECT DISTINCT to_email AS v FROM mail_log WHERE status = 'sent' AND created_at > ?").bind(t - MAIL_COOLDOWN),
+    env.DB.prepare("SELECT COUNT(*) AS v FROM mail_log WHERE status = 'sent' AND created_at > ?").bind(t - 86400),
+  ]);
+  const recentSet = new Set(recent.results.map((r) => String(r.v)));
+  const list = [...new Set(emails.map((e) => e.trim().toLowerCase()))].filter((e) => !recentSet.has(e));
+  const skipped = emails.length - list.length;
+  const room = mailDailyLimit(env) - Number(day.results[0]?.v ?? 0);
+  if (list.length > room) return { sent: 0, skipped: emails.length, error: `Dzienny limit maili nie wystarczy (zostało ${Math.max(0, room)}). Spróbuj jutro.` };
+  if (!list.length) return { sent: 0, skipped, error: 'Wszyscy dostali maila w ostatnich minutach. Spróbuj za 5 minut.' };
+
+  const port = Number(env.SMTP_PORT || 465);
+  const from = { name: env.MAIL_FROM_NAME || 'Toastmasters Częstochowa', email: env.SMTP_USER! };
+  const logs: D1PreparedStatement[] = [];
+  let sent = 0;
+  let error: string | undefined;
+  for (let i = 0; i < list.length; i += 90) {
+    const chunk = list.slice(i, i + 90);
+    try {
+      await WorkerMailer.send(
+        {
+          host: env.SMTP_HOST || 'smtp.gmail.com',
+          port,
+          secure: port === 465,
+          startTls: port !== 465,
+          credentials: { username: env.SMTP_USER!, password: env.SMTP_PASS!.replace(/\s+/g, '') },
+          authType: ['plain', 'login'],
+          socketTimeoutMs: 20000,
+          responseTimeoutMs: 20000,
+        },
+        { from, to: from, bcc: chunk, subject: msg.subject, text: msg.text, html: msg.html },
+      );
+      sent += chunk.length;
+      for (const e of chunk) logs.push(env.DB.prepare("INSERT INTO mail_log (to_email, subject, status, created_at) VALUES (?, ?, 'sent', ?)").bind(e, msg.subject, t));
+    } catch (e) {
+      error = `Błąd wysyłki: ${e instanceof Error ? e.message : String(e)}`;
+      for (const addr of chunk) logs.push(env.DB.prepare("INSERT INTO mail_log (to_email, subject, status, error, created_at) VALUES (?, ?, 'error', ?, ?)").bind(addr, msg.subject, error, t));
+    }
+  }
+  if (logs.length) await env.DB.batch(logs);
+  return { sent, skipped, error };
+}
+
+export function announcementMail(subject: string, message: string, link: string) {
+  const paragraphs = message
+    .split(/\n{2,}|\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const foot = 'Nie pamiętasz hasła albo jeszcze go nie ustawiłeś(-aś)? Na stronie logowania kliknij „Wyślij mi link do logowania”.';
+  return {
+    subject,
+    text: `Cześć!\n\n${paragraphs.join('\n\n')}\n\nPrzejdź do konkursu: ${link}\n\n${foot}\n\nToastmasters Częstochowa`,
+    html: wrapHtml(subject, ['Cześć!', ...paragraphs.map(esc)], { label: 'Przejdź do konkursu', url: link }, foot),
   };
 }

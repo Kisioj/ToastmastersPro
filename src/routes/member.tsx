@@ -1,10 +1,10 @@
 import { Hono } from 'hono';
 import type { AppEnv, Contest, EntryRow, User } from '../env';
-import { canManage, canSeeResults, computeTallies, getContest, isTestMode, listContests, listEntries, managedContestIds, ROLLUP_DEFAULTS, userBallots } from '../lib/contests';
+import { canManage, canSeeResults, computeTallies, getContest, isTestMode, leaderboard, listContests, listEntries, managedContestIds, ROLLUP_DEFAULTS, userBallots, type LeaderRow } from '../lib/contests';
 import { setFlash, takeFlash } from '../lib/flash';
 import { hashPassword, MIN_PASSWORD, passwordProblem } from '../lib/password';
-import { firstName, fmtDate, fmtSize, safeJson } from '../lib/util';
-import { isMethod, METHODS, type MethodId } from '../lib/voting';
+import { firstName, fmtDate, fmtDay, fmtSize, safeJson } from '../lib/util';
+import { isMethod, METHODS, plural, type MethodId } from '../lib/voting';
 import { aiProvider, type AiReview } from '../lib/ai';
 import { getStore } from '../lib/storage';
 import { JsonData, Layout, PageHead, PasswordInput, PhasePill } from '../views/layout';
@@ -13,6 +13,7 @@ import { AiReviewView, TechReportView, VERDICT_AI, VERDICT_TECH, type TechReport
 export const member = new Hono<AppEnv>();
 
 const ctaFor = (c: Contest, voted: boolean) => {
+  if (c.kind === 'leaderboard') return 'Zobacz ranking';
   if (c.phase === 'voting') return voted ? 'Zobacz / zmień głos' : 'Zagłosuj';
   if (c.phase === 'submissions') return c.kind === 'rollup' ? 'Wyślij projekt' : 'Zobacz propozycje';
   if (c.phase === 'closed') return 'Wyniki';
@@ -38,7 +39,7 @@ member.get('/', async (c) => {
               {contests.map((ct) => (
                 <article class="card contest-card">
                   <p class="row" style="margin:0">
-                    <PhasePill phase={ct.phase} />
+                    <PhasePill phase={ct.phase} kind={ct.kind} />
                     {votedSet.has(ct.id) && <span class="pill ok">✓ Oddano głos</span>}
                     {isTestMode(ct) && ct.phase === 'voting' && <span class="pill warn">Tryb testowy</span>}
                   </p>
@@ -84,7 +85,8 @@ member.get('/konkursy/:slug', async (c) => {
     .bind(contest.id, user.id)
     .first<{ preferred: string; comment: string }>();
   const testMode = isTestMode(contest);
-  const showVoting = contest.phase === 'voting' || (contest.phase === 'draft' && manager);
+  const isBoard = contest.kind === 'leaderboard';
+  const showVoting = !isBoard && (contest.phase === 'voting' || (contest.phase === 'draft' && manager));
   const isRollup = contest.kind === 'rollup';
 
   const mySubs =
@@ -111,15 +113,33 @@ member.get('/konkursy/:slug', async (c) => {
         ).results
       : [];
 
+  const board = isBoard ? await leaderboard(db, contest.id) : [];
+  const visits =
+    isBoard && manager
+      ? (
+          await db
+            .prepare(
+              `SELECT v.id, v.guest_name, v.visit_date, COALESCE(NULLIF(u.name, ''), u.email) AS host
+               FROM guest_visits v JOIN users u ON u.id = v.user_id WHERE v.contest_id = ? ORDER BY COALESCE(v.visit_date, '') DESC, v.id DESC`,
+            )
+            .bind(contest.id)
+            .all<{ id: number; guest_name: string; visit_date: string | null; host: string }>()
+        ).results
+      : [];
+  const hosts =
+    isBoard && manager
+      ? (await db.prepare("SELECT id, COALESCE(NULLIF(name, ''), email) AS name FROM users WHERE active = 1 ORDER BY name").all<{ id: number; name: string }>()).results
+      : [];
+
   const scripts = ['/js/app.js'];
-  if (showVoting || contest.phase === 'closed') scripts.push('/js/vote.js');
+  if (!isBoard && (showVoting || contest.phase === 'closed')) scripts.push('/js/vote.js');
   if (isRollup && contest.phase === 'submissions') scripts.push('/js/rollup.js');
 
   return c.html(
     <Layout title={contest.title} user={user} flash={takeFlash(c)} scripts={scripts} nav="home">
       <PageHead eyebrow={isRollup ? 'Konkurs na projekt' : 'Konkurs'} title={contest.title} lead={contest.description}>
         <p class="row" style="margin:16px 0 0">
-          <PhasePill phase={contest.phase} />
+          <PhasePill phase={contest.phase} kind={contest.kind} />
           {testMode && showVoting && <span class="pill warn">Tryb testowy: kilka sposobów głosowania</span>}
           {manager && (
             <a class="btn ghost small" href={`/admin/konkursy/${contest.id}`}>
@@ -128,6 +148,8 @@ member.get('/konkursy/:slug', async (c) => {
           )}
         </p>
       </PageHead>
+
+      {isBoard && <Leaderboard contest={contest} rows={board} me={user.id} manager={manager} visits={visits} hosts={hosts} />}
 
       {isRollup && contest.phase === 'submissions' && <RollupSubmit contest={contest} user={user} mySubs={mySubs} aiOn={aiProvider(c.env) !== null} storeOn={getStore(c.env) !== null} />}
 
@@ -142,19 +164,16 @@ member.get('/konkursy/:slug', async (c) => {
               <p class="empty-note">Nikt jeszcze nie wysłał projektu.</p>
             ) : (
               <div class="stack" style="--gap:16px">
-                {allSubs
-                  // własne projekty admina są już wyżej („Twoje zgłoszenia”) — bez duplikatów id w DOM
-                  .filter((e) => !(contest.phase === 'submissions' && e.author_id === user.id))
-                  .map((e) => (
-                    <SubmissionCard entry={e} aiOn={aiProvider(c.env) !== null} canDelete={true} author={e.author} />
-                  ))}
+                {allSubs.map((e) => (
+                  <SubmissionCard entry={e} aiOn={aiProvider(c.env) !== null} canDelete={true} author={e.author_id === user.id ? `${e.author} (Ty)` : e.author} anchor={false} />
+                ))}
               </div>
             )}
           </div>
         </section>
       )}
 
-      {!isRollup && contest.phase === 'submissions' && (
+      {contest.kind === 'text' && contest.phase === 'submissions' && (
         <section class="section tight">
           <div class="wrap mid">
             <h2>Propozycje</h2>
@@ -258,7 +277,7 @@ member.get('/konkursy/:slug', async (c) => {
         </section>
       )}
 
-      {contest.phase === 'closed' && (
+      {!isBoard && contest.phase === 'closed' && (
         <section class="section tight">
           <div class="wrap mid">
             <h2>Wyniki</h2>
@@ -275,7 +294,7 @@ member.get('/konkursy/:slug', async (c) => {
         </section>
       )}
 
-      {(showVoting || contest.phase === 'closed') && (
+      {!isBoard && (showVoting || contest.phase === 'closed') && (
         <JsonData
           id="vote-data"
           data={{
@@ -375,12 +394,13 @@ const RollupSubmit = ({ contest, user, mySubs, aiOn, storeOn }: { contest: Conte
   );
 };
 
-export const SubmissionCard = ({ entry: e, aiOn, canDelete, author }: { entry: EntryRow; aiOn: boolean; canDelete: boolean; author?: string }) => {
+/** anchor=false: karta pokazana drugi raz na stronie (widok admina) — bez zduplikowanego id */
+export const SubmissionCard = ({ entry: e, aiOn, canDelete, author, anchor = true }: { entry: EntryRow; aiOn: boolean; canDelete: boolean; author?: string; anchor?: boolean }) => {
   const report = safeJson<TechReport | null>(e.report, null);
   const ai = safeJson<AiReview | null>(e.ai_report, null);
   const tech = VERDICT_TECH[report?.verdict ?? 'warn'] ?? VERDICT_TECH.warn;
   return (
-    <article class="card" id={`entry-${e.id}`}>
+    <article class="card" id={anchor ? `entry-${e.id}` : undefined}>
       <div class="subm">
         {e.preview_key ? (
           <button type="button" class="thumb-btn" data-lightbox={`/pliki/${e.id}/podglad`} data-title={e.title} aria-label={`Powiększ podgląd: ${e.title}`}>
@@ -438,6 +458,164 @@ export const SubmissionCard = ({ entry: e, aiOn, canDelete, author }: { entry: E
     </article>
   );
 };
+
+const Leaderboard = ({
+  contest,
+  rows,
+  me,
+  manager,
+  visits,
+  hosts,
+}: {
+  contest: Contest;
+  rows: LeaderRow[];
+  me: number;
+  manager: boolean;
+  visits: { id: number; guest_name: string; visit_date: string | null; host: string }[];
+  hosts: { id: number; name: string }[];
+}) => {
+  const s = contest.settings;
+  const max = Math.max(1, ...rows.map((r) => r.guests));
+  return (
+    <section class="section tight">
+      <div class="wrap mid stack" style="--gap:28px">
+        {(s.period_start || s.period_end) && (
+          <p class="callout blue" style="margin:0">
+            Okres konkursu: <strong>{s.period_start ? `od ${fmtDay(s.period_start)}` : ''}{s.period_end ? ` do ${fmtDay(s.period_end)}` : ''}</strong>
+          </p>
+        )}
+        <div class="card">
+          <h2>Ranking</h2>
+          {rows.length === 0 ? (
+            <p class="empty-note">Jeszcze nikt nie przyprowadził gościa. Może to będziesz Ty?</p>
+          ) : (
+            <ol class="results">
+              {rows.map((r) => (
+                <li class={r.user_id === me ? 'me' : undefined}>
+                  <span class="place" aria-label={`Miejsce ${r.rank}`}>
+                    {r.rank}
+                  </span>
+                  <span class="name">
+                    <span>
+                      {r.name}
+                      {r.user_id === me ? ' (Ty)' : ''}
+                    </span>
+                    <small>
+                      {r.guests} {plural(r.guests, 'gość', 'gości', 'gości')}
+                    </small>
+                  </span>
+                  <span class="bar" aria-hidden="true">
+                    <i style={`width:${Math.round((r.guests / max) * 100)}%`}></i>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          )}
+          <p class="muted small" style="margin:14px 0 0">Ranking aktualizuje zarząd klubu na podstawie listy gości ze spotkań.</p>
+        </div>
+
+        {manager && (
+          <div class="card stack" style="--gap:18px">
+            <h2 style="margin:0">
+              Dodaj gościa <span class="pill">dla zarządzających</span>
+            </h2>
+            <form class="form" method="post" action={`/konkursy/${contest.slug}/goscie`}>
+              <label for="host">
+                Kto przyprowadził
+                <select id="host" name="user_id" required>
+                  <option value="">Wybierz osobę</option>
+                  {hosts.map((h) => (
+                    <option value={String(h.id)}>{h.name}</option>
+                  ))}
+                </select>
+              </label>
+              <div class="grid" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:16px;align-items:end">
+                <label for="guest-name">
+                  Imię gościa <span class="hint">opcjonalnie, widzą tylko zarządzający</span>
+                  <input type="text" id="guest-name" name="guest_name" maxlength={80} autocomplete="off" />
+                </label>
+                <label for="visit-date">
+                  Data spotkania <span class="hint">opcjonalnie</span>
+                  <input type="date" id="visit-date" name="visit_date" min={s.period_start} max={s.period_end} />
+                </label>
+              </div>
+              <label class="check">
+                <input type="checkbox" name="confirm" value="1" required />
+                <span>Gość jest u nas pierwszy raz od co najmniej pół roku i powiedział, od kogo przyszedł.</span>
+              </label>
+              <button class="btn" type="submit" style="justify-self:start">
+                Dodaj gościa
+              </button>
+            </form>
+            {visits.length > 0 && (
+              <div class="table-wrapper" tabindex={0} role="region" aria-labelledby="visits-cap">
+                <table class="data">
+                  <caption id="visits-cap">Zapisani goście ({visits.length})</caption>
+                  <thead>
+                    <tr>
+                      <th>Przyprowadził(a)</th>
+                      <th>Gość</th>
+                      <th>Data</th>
+                      <th>Akcje</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visits.map((v) => (
+                      <tr>
+                        <th>{v.host}</th>
+                        <td data-label="Gość">{v.guest_name || '-'}</td>
+                        <td data-label="Data">{fmtDay(v.visit_date) || '-'}</td>
+                        <td class="actions-cell">
+                          <form method="post" action={`/konkursy/${contest.slug}/goscie/${v.id}/usun`} class="inline-form" data-confirm="Usunąć ten wpis?">
+                            <button class="btn danger small" type="submit">
+                              Usuń
+                            </button>
+                          </form>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+};
+
+member.post('/konkursy/:slug/goscie', async (c) => {
+  const user = c.var.user!;
+  const db = c.env.DB;
+  const contest = await getContest(db, c.req.param('slug'));
+  if (!contest || contest.kind !== 'leaderboard') return c.notFound();
+  if (!(await canManage(db, user, contest.id))) return c.text('Brak dostępu.', 403);
+  const f = await c.req.parseBody();
+  const host = await db.prepare('SELECT id, name, email FROM users WHERE id = ? AND active = 1').bind(Number(f.user_id)).first<{ id: number; name: string; email: string }>();
+  if (!host || !f.confirm) {
+    setFlash(c, 'err', 'Wybierz osobę i potwierdź, że gość spełnia warunki konkursu.');
+    return c.redirect(`/konkursy/${contest.slug}`);
+  }
+  const guest = String(f.guest_name ?? '').trim().slice(0, 80);
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(f.visit_date ?? '')) ? String(f.visit_date) : null;
+  await db
+    .prepare('INSERT INTO guest_visits (contest_id, user_id, guest_name, visit_date, added_by, created_at) VALUES (?, ?, ?, ?, ?, unixepoch())')
+    .bind(contest.id, host.id, guest, date, user.id)
+    .run();
+  setFlash(c, 'ok', `Dodano gościa dla: ${host.name || host.email}.`);
+  return c.redirect(`/konkursy/${contest.slug}`);
+});
+
+member.post('/konkursy/:slug/goscie/:id/usun', async (c) => {
+  const db = c.env.DB;
+  const contest = await getContest(db, c.req.param('slug'));
+  if (!contest || contest.kind !== 'leaderboard') return c.notFound();
+  if (!(await canManage(db, c.var.user!, contest.id))) return c.text('Brak dostępu.', 403);
+  await db.prepare('DELETE FROM guest_visits WHERE id = ? AND contest_id = ?').bind(Number(c.req.param('id')), contest.id).run();
+  setFlash(c, 'ok', 'Usunięto wpis.');
+  return c.redirect(`/konkursy/${contest.slug}`);
+});
 
 member.post('/konkursy/:slug/opinia', async (c) => {
   const user = c.var.user!;

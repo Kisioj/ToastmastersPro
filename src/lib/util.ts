@@ -94,3 +94,10 @@ export function firstName(name: string, email: string): string {
   const n = name.trim().split(/\s+/)[0];
   return n || email.split('@')[0];
 }
+
+/** RRRR-MM-DD -> „1 października 2026” */
+export function fmtDay(d?: string | null): string {
+  return d && /^\d{4}-\d{2}-\d{2}$/.test(d)
+    ? new Date(`${d}T12:00:00Z`).toLocaleDateString('pl-PL', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' })
+    : '';
+}
