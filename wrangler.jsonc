@@ -1,0 +1,39 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "toastmasters-czestochowa",
+  "main": "src/index.tsx",
+  "compatibility_date": "2026-11-01",
+  // nodejs_compat jest potrzebne bibliotece worker-mailer (SMTP przez gniazda TCP)
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": "./public" },
+  "observability": { "enabled": true },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "toastmasters-czestochowa",
+      "database_id": "6cb80b14-89a8-4e2f-b125-d20ec41478ee",
+      "migrations_dir": "migrations"
+    }
+  ],
+
+  // Pliki konkursowe (rollupy). Domyślnie Workers KV — działa bez podpinania karty.
+  // Po włączeniu R2 w panelu Cloudflare odkomentuj "r2_buckets" — aplikacja sama przełączy się na R2.
+  "kv_namespaces": [{ "binding": "FILES_KV", "id": "bbdd0c91d7814ca88680d4c47153653a" }],
+  // "r2_buckets": [{ "binding": "FILES", "bucket_name": "toastmasters-czestochowa-pliki" }],
+
+  // Workers AI — darmowe 10 000 „neuronów” dziennie, wystarcza na kilkadziesiąt ocen projektów.
+  "ai": { "binding": "AI" },
+
+  "vars": {
+    "SMTP_HOST": "smtp.gmail.com",
+    "SMTP_PORT": "465",
+    "SMTP_USER": "toastmastersczwa@gmail.com",
+    "MAIL_FROM_NAME": "Toastmasters Częstochowa",
+    // "workers-ai" (darmowe) albo "claude" (wymaga sekretu ANTHROPIC_API_KEY)
+    "AI_PROVIDER": "workers-ai",
+    "WORKERS_AI_MODEL": "@cf/meta/llama-4-scout-17b-16e-instruct",
+    "CLAUDE_MODEL": "claude-opus-5-5",
+    "AI_DAILY_LIMIT": "15"
+  }
+}

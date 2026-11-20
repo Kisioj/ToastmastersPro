@@ -1,0 +1,14 @@
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.env*
+# dane klubowe (hasła konkursowe, listy członków) nie trafiają do publicznego repo
+seed/
+# kopiowane z node_modules przez scripts/copy-vendor.mjs
+public/vendor/
+worker-configuration.d.ts
+*.log
+.DS_Store
+.idea/

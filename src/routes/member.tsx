@@ -1,0 +1,482 @@
+import { Hono } from 'hono';
+import type { AppEnv, Contest, EntryRow, User } from '../env';
+import { canSeeResults, computeTallies, getContest, isTestMode, listContests, listEntries, ROLLUP_DEFAULTS, userBallots } from '../lib/contests';
+import { setFlash, takeFlash } from '../lib/flash';
+import { hashPassword, MIN_PASSWORD, passwordProblem } from '../lib/password';
+import { firstName, fmtDate, fmtSize, safeJson } from '../lib/util';
+import { isMethod, METHODS, type MethodId } from '../lib/voting';
+import { aiProvider, type AiReview } from '../lib/ai';
+import { getStore } from '../lib/storage';
+import { JsonData, Layout, PageHead, PasswordInput, PhasePill } from '../views/layout';
+import { AiReviewView, TechReportView, VERDICT_AI, VERDICT_TECH, type TechReport } from '../views/reports';
+
+export const member = new Hono<AppEnv>();
+
+const ctaFor = (c: Contest, voted: boolean) => {
+  if (c.phase === 'voting') return voted ? 'Zobacz / zmień głos' : 'Zagłosuj';
+  if (c.phase === 'submissions') return c.kind === 'rollup' ? 'Wyślij projekt' : 'Zobacz propozycje';
+  if (c.phase === 'closed') return 'Wyniki';
+  return 'Podgląd';
+};
+
+member.get('/', async (c) => {
+  const user = c.var.user!;
+  const contests = await listContests(c.env.DB, user.role === 'admin');
+  const { results: voted } = await c.env.DB.prepare('SELECT DISTINCT contest_id FROM ballots WHERE user_id = ?').bind(user.id).all<{ contest_id: number }>();
+  const votedSet = new Set(voted.map((v) => v.contest_id));
+  return c.html(
+    <Layout title="Konkursy" user={user} flash={takeFlash(c)} nav="home">
+      <PageHead eyebrow={`Cześć, ${firstName(user.name, user.email)}!`} title="Konkursy klubowe" lead="Tu głosujemy i zbieramy projekty. Każdy członek klubu ma jeden głos — możesz go zmieniać do końca głosowania." />
+      <section class="section tight">
+        <div class="wrap">
+          {contests.length === 0 ? (
+            <p class="empty-note">Na razie nie ma żadnych konkursów. Zajrzyj tu wkrótce!</p>
+          ) : (
+            <div class="grid">
+              {contests.map((ct) => (
+                <article class="card contest-card">
+                  <p class="row" style="margin:0">
+                    <PhasePill phase={ct.phase} />
+                    {votedSet.has(ct.id) && <span class="pill ok">✓ Oddano głos</span>}
+                    {isTestMode(ct) && ct.phase === 'voting' && <span class="pill warn">Tryb testowy</span>}
+                  </p>
+                  <h3>{ct.title}</h3>
+                  {ct.description && <p>{ct.description.length > 180 ? `${ct.description.slice(0, 180)}…` : ct.description}</p>}
+                  <a class="btn" href={`/konkursy/${ct.slug}`}>
+                    {ctaFor(ct, votedSet.has(ct.id))}
+                  </a>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+    </Layout>,
+  );
+});
+
+const previewUrl = (e: EntryRow) => (e.preview_key ? `/pliki/${e.id}/podglad` : null);
+
+member.get('/konkursy/:slug', async (c) => {
+  const user = c.var.user!;
+  const db = c.env.DB;
+  const contest = await getContest(db, c.req.param('slug'));
+  if (!contest || (contest.phase === 'draft' && user.role !== 'admin')) return c.notFound();
+
+  const entries = await listEntries(db, contest.id);
+  const ballots = await userBallots(db, contest.id, user.id);
+  const visibleMethods = contest.methods.filter((m) => canSeeResults(contest, user, m in ballots));
+  const tallies = await computeTallies(db, contest, visibleMethods, entries);
+  const feedback = await db
+    .prepare('SELECT preferred, comment FROM method_feedback WHERE contest_id = ? AND user_id = ?')
+    .bind(contest.id, user.id)
+    .first<{ preferred: string; comment: string }>();
+  const testMode = isTestMode(contest);
+  const showVoting = contest.phase === 'voting' || (contest.phase === 'draft' && user.role === 'admin');
+  const isRollup = contest.kind === 'rollup';
+
+  const mySubs =
+    isRollup
+      ? (
+          await db
+            .prepare('SELECT * FROM entries WHERE contest_id = ? AND author_id = ? ORDER BY created_at DESC')
+            .bind(contest.id, user.id)
+            .all<EntryRow>()
+        ).results
+      : [];
+
+  const scripts = ['/js/app.js'];
+  if (showVoting || contest.phase === 'closed') scripts.push('/js/vote.js');
+  if (isRollup && contest.phase === 'submissions') scripts.push('/js/rollup.js');
+
+  return c.html(
+    <Layout title={contest.title} user={user} flash={takeFlash(c)} scripts={scripts} nav="home">
+      <PageHead eyebrow={isRollup ? 'Konkurs na projekt' : 'Konkurs'} title={contest.title} lead={contest.description}>
+        <p class="row" style="margin:16px 0 0">
+          <PhasePill phase={contest.phase} />
+          {testMode && showVoting && <span class="pill warn">Tryb testowy: kilka sposobów głosowania</span>}
+          {user.role === 'admin' && (
+            <a class="btn ghost small" href={`/admin/konkursy/${contest.id}`}>
+              Ustawienia konkursu
+            </a>
+          )}
+        </p>
+      </PageHead>
+
+      {isRollup && contest.phase === 'submissions' && <RollupSubmit contest={contest} user={user} mySubs={mySubs} aiOn={aiProvider(c.env) !== null} storeOn={getStore(c.env) !== null} />}
+
+      {!isRollup && contest.phase === 'submissions' && (
+        <section class="section tight">
+          <div class="wrap mid">
+            <h2>Propozycje</h2>
+            <ol class="opts">
+              {entries.map((e) => (
+                <li class="opt">
+                  <span class="txt">{e.title}</span>
+                </li>
+              ))}
+            </ol>
+            <p class="muted" style="margin-top:16px">
+              Głosowanie jeszcze się nie zaczęło.
+            </p>
+          </div>
+        </section>
+      )}
+
+      {showVoting && (
+        <section class="section tight">
+          <div class="wrap mid">
+            {contest.phase === 'draft' && <p class="callout">Podgląd admina — konkurs jest w szkicu, członkowie go nie widzą.</p>}
+            {testMode && (
+              <div class="callout" style="margin-bottom:20px">
+                <p>
+                  <strong>Tryb testowy.</strong> Nie zdecydowaliśmy jeszcze, jak głosować. Wypróbuj każdy sposób (zakładki poniżej) — głosy w każdej
+                  zakładce liczą się osobno. Na dole strony powiedz nam, który sposób najbardziej Ci odpowiada.
+                </p>
+              </div>
+            )}
+            {entries.length < 2 ? (
+              <p class="empty-note">Za mało propozycji, żeby głosować.</p>
+            ) : (
+              <div class="tabs" id="vote-app">
+                {testMode && (
+                  <div role="tablist" class="tablist" aria-label="Sposób głosowania">
+                    {contest.methods.map((m, i) => (
+                      <button type="button" role="tab" id={`tab-${m}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1} data-method={m}>
+                        {METHODS[m].short}
+                        {m in ballots && (
+                          <span class="done-mark" aria-label="oddano głos">
+                            ✓
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {contest.methods.map((m, i) => (
+                  <div
+                    role={testMode ? 'tabpanel' : 'region'}
+                    id={`panel-${m}`}
+                    aria-labelledby={testMode ? `tab-${m}` : undefined}
+                    aria-label={testMode ? undefined : 'Głosowanie'}
+                    hidden={i > 0}
+                    data-panel={m}
+                  >
+                    <div class="tabpanel-inner">
+                      <div class="method-head">
+                        <h2>{testMode ? METHODS[m].name : 'Twój głos'}</h2>
+                        <p>{METHODS[m].tagline.replace('10 punktów', `${contest.settings.points_budget ?? 10} punktów`)}</p>
+                        <p class="how">Jak liczymy: {METHODS[m].scoring}</p>
+                      </div>
+                      <div data-ballot={m}>
+                        <noscript>
+                          <p class="flash err">Do głosowania potrzebny jest włączony JavaScript.</p>
+                        </noscript>
+                      </div>
+                      <div class="res-box" data-results={m} hidden={!tallies[m]}></div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {testMode && contest.phase === 'voting' && (
+              <form class="form card" method="post" action={`/konkursy/${contest.slug}/opinia`} style="margin-top:36px">
+                <h2 style="margin:0">Który sposób głosowania jest najlepszy?</h2>
+                <fieldset>
+                  <legend>Wybierz jeden</legend>
+                  {contest.methods.map((m) => (
+                    <label class="check">
+                      <input type="radio" name="preferred" value={m} required checked={feedback?.preferred === m} />
+                      <span>
+                        <strong>{METHODS[m].name}</strong> <span class="hint">— {METHODS[m].pros}</span>
+                      </span>
+                    </label>
+                  ))}
+                </fieldset>
+                <label for="fb-comment">
+                  Komentarz (opcjonalnie)
+                  <textarea id="fb-comment" name="comment" maxlength={1000} placeholder="Co było wygodne, co męczyło?">
+                    {feedback?.comment ?? ''}
+                  </textarea>
+                </label>
+                <button class="btn" type="submit" style="justify-self:start">
+                  {feedback ? 'Zmień opinię' : 'Wyślij opinię'}
+                </button>
+              </form>
+            )}
+          </div>
+        </section>
+      )}
+
+      {contest.phase === 'closed' && (
+        <section class="section tight">
+          <div class="wrap mid">
+            <h2>Wyniki</h2>
+            {visibleMethods.length === 0 ? (
+              <p class="empty-note">Wyniki ogłosi zarząd klubu.</p>
+            ) : (
+              <div id="closed-results" class="stack" style="--gap:32px">
+                {visibleMethods.map((m) => (
+                  <div class="card" data-static-results={m}></div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+
+      {(showVoting || contest.phase === 'closed') && (
+        <JsonData
+          id="vote-data"
+          data={{
+            contestId: contest.id,
+            phase: contest.phase,
+            kind: contest.kind,
+            testMode,
+            budget: contest.settings.points_budget ?? 10,
+            methods: contest.methods.map((m) => ({ id: m, name: METHODS[m].name })),
+            entries: entries.map((e) => ({ id: e.id, title: e.title, preview: previewUrl(e) })),
+            ballots,
+            results: tallies,
+          }}
+        />
+      )}
+
+      <dialog class="lightbox" id="lightbox" closedby="any" aria-labelledby="lb-title">
+        <div class="lb-head">
+          <h2 id="lb-title">Podgląd</h2>
+          <button type="button" class="btn ghost small" data-close-dialog>
+            Zamknij
+          </button>
+        </div>
+        <div class="lb-body">
+          <img id="lb-img" alt="" />
+        </div>
+      </dialog>
+    </Layout>,
+  );
+});
+
+const RollupSubmit = ({ contest, user, mySubs, aiOn, storeOn }: { contest: Contest; user: User; mySubs: EntryRow[]; aiOn: boolean; storeOn: boolean }) => {
+  const s = { ...ROLLUP_DEFAULTS, ...contest.settings };
+  const done = mySubs.filter((e) => e.upload_complete);
+  const limitReached = user.role !== 'admin' && done.length >= s.max_entries;
+  return (
+    <section class="section tight">
+      <div class="wrap mid stack" style="--gap:28px">
+        <div class="card">
+          <h2>Wymagania techniczne</h2>
+          <ul class="spec">
+            <li>
+              Wymiar rollupu: <strong>{s.width_mm / 10} × {s.height_mm / 10} cm</strong> (pion). Plik w skali 1:1 albo 1:10 — sprawdzimy proporcje.
+            </li>
+            <li>
+              Najlepiej <strong>PDF</strong> (wektorowy, z osadzonymi czcionkami lub tekstem zamienionym na krzywe). Przyjmujemy też SVG, JPG, PNG i
+              WebP.
+            </li>
+            <li>
+              Zdjęcia i grafiki rastrowe: min. <strong>100 DPI</strong> w skali 1:1 (zalecane 150 DPI) — czyli np. JPG co najmniej{' '}
+              {Math.round((s.width_mm / 25.4) * 100)} × {Math.round((s.height_mm / 25.4) * 100)} px.
+            </li>
+            <li>Dolne ~10 cm chowa się w kasecie stojaka — nie umieszczaj tam ważnych treści. Zostaw ~3 cm marginesu po bokach.</li>
+            <li>
+              Zgodność z <a href="https://content.toastmasters.org/image/upload/02330-001-0001-brand-manual.pdf">Brand Manualem Toastmasters</a>:
+              oficjalne logo bez zmian, kolory Loyal Blue #004165 i True Maroon #772432 (akcenty: Cool Gray #A9B2B1, Happy Yellow #F2DF74), czcionki
+              Montserrat/Gotham i Source Sans/Myriad.
+            </li>
+            <li>
+              Maks. rozmiar pliku: {s.max_mb} MB. Maks. {s.max_entries} {s.max_entries === 1 ? 'projekt' : 'projekty'} na osobę.
+            </li>
+          </ul>
+        </div>
+
+        {!storeOn ? (
+          <p class="flash err">Przechowywanie plików nie jest skonfigurowane — daj znać adminowi.</p>
+        ) : limitReached ? (
+          <p class="callout">Wysłałeś(-aś) już maksymalną liczbę projektów ({s.max_entries}). Możesz usunąć któryś poniżej i wysłać nowy.</p>
+        ) : (
+          <div class="card raised" id="rollup-app">
+            <h2>Wyślij projekt</h2>
+            <p class="muted">Najpierw sprawdzimy plik w Twojej przeglądarce (rozmiar, proporcje, DPI, czcionki, kolory). Plik nie jest nigdzie wysyłany, dopóki nie klikniesz „Wyślij projekt”.</p>
+            <label class="drop" id="drop">
+              <input type="file" id="file" accept=".pdf,.svg,.jpg,.jpeg,.png,.webp,application/pdf,image/svg+xml,image/jpeg,image/png,image/webp" />
+              <strong>Wybierz plik albo upuść go tutaj</strong>
+              <span class="muted small">PDF, SVG, JPG, PNG, WebP · do {s.max_mb} MB</span>
+            </label>
+            <div id="analysis" hidden></div>
+          </div>
+        )}
+
+        <div>
+          <h2>Twoje zgłoszenia</h2>
+          {mySubs.length === 0 ? (
+            <p class="empty-note">Nie masz jeszcze zgłoszeń.</p>
+          ) : (
+            <div class="stack" style="--gap:16px">
+              {mySubs.map((e) => (
+                <SubmissionCard entry={e} aiOn={aiOn} canDelete={true} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <JsonData id="rollup-data" data={{ contestId: contest.id, settings: s, aiOn }} />
+    </section>
+  );
+};
+
+export const SubmissionCard = ({ entry: e, aiOn, canDelete, author }: { entry: EntryRow; aiOn: boolean; canDelete: boolean; author?: string }) => {
+  const report = safeJson<TechReport | null>(e.report, null);
+  const ai = safeJson<AiReview | null>(e.ai_report, null);
+  const tech = VERDICT_TECH[report?.verdict ?? 'warn'] ?? VERDICT_TECH.warn;
+  return (
+    <article class="card" id={`entry-${e.id}`}>
+      <div class="subm">
+        {e.preview_key ? (
+          <button type="button" class="thumb-btn" data-lightbox={`/pliki/${e.id}/podglad`} data-title={e.title} aria-label={`Powiększ podgląd: ${e.title}`}>
+            <img class="thumb" src={`/pliki/${e.id}/podglad`} alt="" loading="lazy" />
+          </button>
+        ) : (
+          <span class="thumb" aria-hidden="true"></span>
+        )}
+        <div class="stack" style="--gap:8px">
+          <h3 style="margin:0">{e.title}</h3>
+          <p class="row small" style="margin:0">
+            {!e.upload_complete && <span class="pill err">Wysyłka nieukończona</span>}
+            {e.hidden ? <span class="pill draft">Ukryty</span> : null}
+            <span class={`pill ${tech.cls}`}>{tech.text}</span>
+            {ai && <span class={`pill ${VERDICT_AI[ai.verdict]?.cls ?? 'warn'}`}>AI: {ai.score}/100</span>}
+            <span class="muted">
+              {e.file_name} · {fmtSize(e.file_size)} · {fmtDate(e.created_at)}
+              {author ? ` · ${author}` : ''}
+            </span>
+          </p>
+          <details class="more">
+            <summary>Raport techniczny</summary>
+            <div style="margin-top:10px">
+              <TechReportView report={report} />
+            </div>
+          </details>
+          <details class="more" open={Boolean(ai)}>
+            <summary>Zgodność z brand manualem (AI)</summary>
+            <div style="margin-top:10px" data-ai-box={e.id}>
+              <AiReviewView review={ai} />
+            </div>
+          </details>
+          <div class="row">
+            {e.upload_complete && e.file_key ? (
+              <a class="btn ghost small" href={`/pliki/${e.id}/plik`}>
+                Pobierz plik
+              </a>
+            ) : null}
+            {aiOn && e.preview_key && (
+              <button type="button" class="btn ghost small" data-ai-run={e.id}>
+                {ai ? 'Oceń ponownie (AI)' : 'Oceń zgodność (AI)'}
+              </button>
+            )}
+            {canDelete && (
+              <form method="post" action={`/zgloszenia/${e.id}/usun`} class="inline-form" data-confirm="Na pewno usunąć ten projekt?">
+                <button type="submit" class="btn danger small">
+                  Usuń
+                </button>
+              </form>
+            )}
+          </div>
+          <p class="status-line small" role="status" data-ai-status={e.id}></p>
+        </div>
+      </div>
+    </article>
+  );
+};
+
+member.post('/konkursy/:slug/opinia', async (c) => {
+  const user = c.var.user!;
+  const contest = await getContest(c.env.DB, c.req.param('slug'));
+  if (!contest || contest.phase !== 'voting') return c.notFound();
+  const f = await c.req.parseBody();
+  const preferred = String(f.preferred ?? '');
+  if (!isMethod(preferred) || !contest.methods.includes(preferred as MethodId)) {
+    setFlash(c, 'err', 'Wybierz jeden ze sposobów głosowania.');
+    return c.redirect(`/konkursy/${contest.slug}`);
+  }
+  const comment = String(f.comment ?? '').slice(0, 1000);
+  await c.env.DB.prepare(
+    `INSERT INTO method_feedback (contest_id, user_id, preferred, comment, updated_at) VALUES (?, ?, ?, ?, unixepoch())
+     ON CONFLICT(contest_id, user_id) DO UPDATE SET preferred = excluded.preferred, comment = excluded.comment, updated_at = excluded.updated_at`,
+  )
+    .bind(contest.id, user.id, preferred, comment)
+    .run();
+  setFlash(c, 'ok', 'Dzięki! Zapisaliśmy Twoją opinię.');
+  return c.redirect(`/konkursy/${contest.slug}`);
+});
+
+member.get('/konto', (c) => {
+  const user = c.var.user!;
+  return c.html(
+    <Layout title="Moje konto" user={user} flash={takeFlash(c)} scripts={['/js/app.js']} nav="account">
+      <PageHead title="Moje konto" lead={user.email} />
+      <section class="section tight">
+        <div class="wrap narrow stack" style="--gap:24px">
+          <form class="form card" method="post" action="/konto">
+            <h2 style="margin:0">Dane</h2>
+            <label for="name">
+              Imię i nazwisko
+              <input type="text" id="name" name="name" value={user.name} autocomplete="name" maxlength={80} />
+            </label>
+            <button class="btn" type="submit" style="justify-self:start">
+              Zapisz
+            </button>
+          </form>
+          <form class="form card" method="post" action="/konto/haslo">
+            <h2 style="margin:0">{user.password_hash ? 'Zmień hasło' : 'Ustaw hasło'}</h2>
+            <p class="hint" style="margin:0">
+              {user.password_hash
+                ? 'Po zmianie hasła wylogujemy Cię na innych urządzeniach.'
+                : 'Na razie logujesz się linkami z maila. Ustaw hasło, jeśli wolisz logować się hasłem.'}
+            </p>
+            <input type="email" name="email" value={user.email} autocomplete="username" hidden readonly />
+            <label for="new-password">
+              Nowe hasło <span class="hint">co najmniej {MIN_PASSWORD} znaków</span>
+              <PasswordInput id="new-password" name="password" autocomplete="new-password" minlength={MIN_PASSWORD} />
+            </label>
+            <button class="btn" type="submit" style="justify-self:start">
+              {user.password_hash ? 'Zmień hasło' : 'Ustaw hasło'}
+            </button>
+          </form>
+          <form method="post" action="/wyloguj">
+            <button class="btn ghost" type="submit">
+              Wyloguj się
+            </button>
+          </form>
+        </div>
+      </section>
+    </Layout>,
+  );
+});
+
+member.post('/konto', async (c) => {
+  const f = await c.req.parseBody();
+  const name = String(f.name ?? '').trim().slice(0, 80);
+  await c.env.DB.prepare('UPDATE users SET name = ? WHERE id = ?').bind(name, c.var.user!.id).run();
+  setFlash(c, 'ok', 'Zapisano.');
+  return c.redirect('/konto');
+});
+
+member.post('/konto/haslo', async (c) => {
+  const user = c.var.user!;
+  const f = await c.req.parseBody();
+  const password = String(f.password ?? '');
+  const problem = passwordProblem(password);
+  if (problem) {
+    setFlash(c, 'err', problem);
+    return c.redirect('/konto');
+  }
+  await c.env.DB.batch([
+    c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(await hashPassword(password), user.id),
+    // wyloguj inne urządzenia, zostaw bieżącą sesję
+    c.env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND id_hash != ?').bind(user.id, c.var.sessionHash ?? ''),
+  ]);
+  setFlash(c, 'ok', 'Hasło zapisane.');
+  return c.redirect('/konto');
+});

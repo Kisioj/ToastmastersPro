@@ -1,0 +1,6 @@
+# Skopiuj do .dev.vars (lokalnie) — na produkcji ustaw przez: npx wrangler secret put NAZWA
+# Hasło aplikacji Gmail dla toastmastersczwa@gmail.com (16 znaków, bez spacji).
+# Bez tego maile nie wychodzą — linki pokazują się wtedy w panelu admina do skopiowania.
+SMTP_PASS=
+# Opcjonalnie: klucz Claude API (lepsza ocena projektów rollupu). Bez klucza używane jest darmowe Workers AI.
+ANTHROPIC_API_KEY=

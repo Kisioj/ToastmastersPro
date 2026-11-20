@@ -1,0 +1,27 @@
+{
+  "name": "toastmasters-czestochowa-strefa",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Strefa członka klubu Toastmasters Częstochowa (Cloudflare Workers + D1 + KV/R2)",
+  "type": "module",
+  "scripts": {
+    "vendor": "node scripts/copy-vendor.mjs",
+    "dev": "node scripts/copy-vendor.mjs && wrangler dev",
+    "deploy": "node scripts/copy-vendor.mjs && wrangler d1 migrations apply DB --remote && wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply DB --local",
+    "db:migrate:remote": "wrangler d1 migrations apply DB --remote",
+    "admin-link": "node scripts/admin-link.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.11.0",
+    "hono": "^4.13.19",
+    "worker-mailer": "^1.3.1"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261120.1",
+    "pdfjs-dist": "^6.5.438",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.165.0"
+  }
+}
