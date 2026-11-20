@@ -29,6 +29,15 @@ app.use(
     referrerPolicy: 'same-origin',
   }),
 );
+// www.toastmasters.pro → toastmasters.pro (jeden adres = jedna sesja i spójne linki w mailach)
+app.use('*', async (c, next) => {
+  const url = new URL(c.req.url);
+  if (url.hostname.startsWith('www.')) {
+    url.hostname = url.hostname.slice(4);
+    return c.redirect(url.toString(), 301);
+  }
+  await next();
+});
 app.use('*', sameOrigin);
 app.use('*', loadUser);
 

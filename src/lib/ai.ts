@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import type { Env } from '../env';
 import { now } from './util';
 
@@ -114,6 +113,8 @@ function extractJson(text: string): unknown {
 }
 
 async function viaClaude(env: Env, imageB64: string, userText: string): Promise<AiReview> {
+  // SDK ładowane dopiero tutaj: to ~3 MB kodu, a darmowy plan liczy CPU zimnego startu (limit 10 ms)
+  const { default: Anthropic } = await import('@anthropic-ai/sdk');
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
   const model = env.CLAUDE_MODEL || 'claude-opus-5-5';
   const params = {

@@ -7,6 +7,16 @@
   "compatibility_flags": ["nodejs_compat"],
   "assets": { "directory": "./public" },
   "observability": { "enabled": true },
+  // mniejszy pakiet = tańszy zimny start (darmowy plan liczy CPU, limit 10 ms)
+  "minify": true,
+
+  // Własna domena (strefa w Cloudflare). Rekordy DNS i certyfikaty SSL tworzy Cloudflare przy deployu.
+  // Adres *.workers.dev nadal działa — linki wysłane wcześniej się nie psują.
+  // TODO: odkomentować po aktywacji strefy toastmasters.pro w Cloudflare
+  // "routes": [
+  //   { "pattern": "toastmasters.pro", "custom_domain": true },
+  //   { "pattern": "www.toastmasters.pro", "custom_domain": true }
+  // ],
 
   "d1_databases": [
     {
