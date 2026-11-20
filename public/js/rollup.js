@@ -587,7 +587,7 @@ function render(box, file, { report, canvas, type }, previewBlob) {
     if (aiBtn.getAttribute('aria-disabled') === 'true') return;
     aiBtn.setAttribute('aria-disabled', 'true');
     aiBox.hidden = false;
-    aiBox.replaceChildren(h('p', { class: 'muted', text: 'AI ocenia projekt, zwykle trwa to kilkanaście sekund.' }), h('progress', { 'aria-label': 'Trwa ocena AI', style: 'width:100%' }));
+    aiBox.replaceChildren(h('p', { class: 'muted', text: 'AI ocenia projekt, zwykle trwa to do minuty.' }), h('progress', { 'aria-label': 'Trwa ocena AI', style: 'width:100%' }));
     try {
       const data = await postJson('/api/ocena-ai', { image: await blobToBase64(previewBlob), title: titleInput.value, report });
       const wrap = h('div');

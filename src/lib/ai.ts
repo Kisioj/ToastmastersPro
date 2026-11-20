@@ -4,7 +4,7 @@ import { now } from './util';
 /**
  * Ocena projektu rollupu pod kątem Brand Manuala Toastmasters International (v2.0, rev. 08/2026).
  * Dwa silniki:
- *  - "workers-ai" — darmowe Workers AI (model wizyjny Mistral Small 3.1), bez dodatkowych kont,
+ *  - "workers-ai" — darmowe Workers AI (model wizyjny Qwen 3.8 bez trybu myślenia), bez dodatkowych kont,
  *  - "claude"     — Claude API (płatne za użycie, wyraźnie lepsza ocena; wymaga sekretu ANTHROPIC_API_KEY).
  * Twarde parametry techniczne (DPI, wymiary, czcionki) liczy przeglądarka — AI dostaje je jako raport.
  */
@@ -166,12 +166,29 @@ async function viaClaude(env: Env, imageB64: string, userText: string): Promise<
   }
 }
 
+/**
+ * Parametry zależne od modelu (test 20.11.2026 na 9 projektach z celowo wstawionymi błędami):
+ *  - Qwen 3.x i Gemma 4 domyślnie „myślą”: 3-4 razy dłużej i drożej, a ocena wcale nie lepsza,
+ *  - Qwen bez wymuszonego schematu czasem psuje JSON (2 z 9 odpowiedzi); Mistral nie obsługuje response_format,
+ *  - ze schematem Qwen czasem wpada w pętlę pustych linii aż do limitu tokenów: „stop” ucina ją od razu
+ *    (poprawny JSON ze schematu nie zawiera surowych pustych linii), a viaWorkersAi ponawia próbę.
+ */
+function workersAiExtras(model: string): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  if (/qwen3|gemma-4/i.test(model)) extra.chat_template_kwargs = { enable_thinking: false };
+  // format OpenAI: { name, schema, strict }; sam schemat w json_schema Cloudflare po cichu ignoruje
+  if (/qwen/i.test(model)) {
+    extra.response_format = { type: 'json_schema', json_schema: { name: 'rollup_review', schema: SCHEMA, strict: true } };
+    extra.stop = ['\n\n\n\n'];
+  }
+  return extra;
+}
+
 async function viaWorkersAi(env: Env, imageB64: string, userText: string): Promise<AiReview> {
-  const model = env.WORKERS_AI_MODEL || '@cf/mistralai/mistral-small-3.1-24b-instruct';
+  const model = env.WORKERS_AI_MODEL || '@cf/qwen/qwen3.8-27b';
   const shape =
     '\n\nRespond with ONE JSON object and nothing else, exactly in this shape: {"verdict":"zgodny|drobne_poprawki|wymaga_zmian","score":0-100,"summary":"...","checks":[{"area":"Kolory","status":"ok|uwaga|blad","comment":"..."}],"suggestions":["..."]}';
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const out = (await (env.AI as any).run(model, {
+  const input = {
     messages: [
       { role: 'system', content: SYSTEM + shape },
       {
@@ -184,10 +201,28 @@ async function viaWorkersAi(env: Env, imageB64: string, userText: string): Promi
     ],
     max_tokens: 2000,
     temperature: 0.2,
-  })) as { response?: unknown };
-  const resp = out?.response;
-  const parsed = typeof resp === 'string' ? extractJson(resp) : resp;
-  return normalize(parsed, 'workers-ai', model);
+    ...workersAiExtras(model),
+  };
+  // Sporadycznie model zwraca pustą albo uciętą odpowiedź: wtedy jedna ponowna próba (z limitu liczy się jedna ocena)
+  for (let attempt = 1; ; attempt++) {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const out = (await (env.AI as any).run(model, input)) as {
+      response?: unknown;
+      choices?: { message?: { content?: unknown }; finish_reason?: string }[];
+    };
+    // starsze modele zwracają { response }, nowsze format OpenAI { choices: [{ message }] }
+    const choice = out?.choices?.[0];
+    const resp = out?.response ?? choice?.message?.content;
+    try {
+      const parsed = typeof resp === 'string' ? extractJson(resp.replace(/<think>[\s\S]*?<\/think>/g, '')) : resp;
+      if (!parsed || typeof parsed !== 'object') throw new Error('Model nie zwrócił oceny w formacie JSON.');
+      return normalize(parsed, 'workers-ai', model);
+    } catch (e) {
+      const text = typeof resp === 'string' ? resp : JSON.stringify(resp ?? null);
+      console.warn('Workers AI: niepoprawna odpowiedź', { attempt, finish: choice?.finish_reason, length: text.length, start: JSON.stringify(text.slice(0, 200)), end: JSON.stringify(text.slice(-120)) });
+      if (attempt >= 2) throw e;
+    }
+  }
 }
 
 /** Komunikat, gdy skończy się darmowa dzienna pula Workers AI (10 000 „neuronów”, odnawia się o 00:00 UTC) */
@@ -236,14 +271,14 @@ export async function reviewDesign(env: Env, input: { imageB64: string; title: s
 
 /**
  * Limity ocen AI:
- *  - AI_CLUB_DAILY_LIMIT ocen dziennie dla całego klubu, wszyscy razem, także admin (domyślnie 100).
- *    Twardy bezpiecznik kosztów: limit wydatków Cloudflare nie obejmuje Workers AI.
+ *  - AI_CLUB_DAILY_LIMIT ocen dziennie dla całego klubu, wszyscy razem, także admin (domyślnie 25,
+ *    z zapasem na ponowne próby mieści się w darmowej puli przy Qwenie). Twardy bezpiecznik kosztów: limit wydatków Cloudflare nie obejmuje Workers AI.
  *  - na osobę (admin i opiekun konkursu bez tych limitów):
  *    AI_DAILY_LIMIT ocen dziennie (domyślnie 8) i AI_COOLDOWN_MINUTES przerwy między ocenami (domyślnie 5).
  * Liczone są tylko udane oceny: błąd albo wyczerpana pula nie zużywa limitu.
  */
 export function aiClubLimit(env: Env): number {
-  return Number(env.AI_CLUB_DAILY_LIMIT || 100);
+  return Number(env.AI_CLUB_DAILY_LIMIT || 25);
 }
 
 export async function aiUsageToday(env: Env): Promise<number> {

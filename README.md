@@ -99,14 +99,17 @@ a opcja „Tylko te osoby mają mieć dostęp” dezaktywuje członków spoza li
 ### Ocena AI — co wybrać
 
 - **Workers AI** (domyślnie, `AI_PROVIDER=workers-ai`): darmowe, bez dodatkowego konta ani klucza (działa w ramach
-  konta Cloudflare, limit 10 000 „neuronów” dziennie, czyli kilkadziesiąt ocen). Model Mistral Small 3.1: ocena
-  w ok. 13 s. Zmierzone alternatywy: Qwen 3.8 (ok. 42 s, dokładniejsze uwagi), Llama 4 Scout (ok. 116 s).
+  konta Cloudflare, limit 10 000 „neuronów” dziennie). Model Qwen 3.8 bez trybu myślenia, z wymuszonym schematem
+  JSON: ocena w 15-70 s, ok. 320 neuronów, czyli ok. 25-30 ocen dziennie za darmo (ponad pulę na Workers Paid ok.
+  0,36 centa za ocenę). W teście na 9 projektach z celowo wstawionymi błędami wypadł najlepiej (16/16 pkt);
+  Gemma 4 26B (14/16) jest ok. 9 razy oszczędniejsza, Mistral Small 3.1 (12/16) mylił oficjalne logo z nieoficjalnym.
+  Model zmienia `WORKERS_AI_MODEL` w `wrangler.jsonc`.
 - **Claude** (`AI_PROVIDER=claude` w `wrangler.jsonc` + `npx wrangler secret put ANTHROPIC_API_KEY`):
   wyraźnie trafniejsza ocena projektów graficznych. Płatne za użycie: domyślny `claude-opus-5-5` to ok.
   5–10 groszy amerykańskich za ocenę, a `CLAUDE_MODEL=claude-haiku-5-5` około 40× taniej.
   Przy kilkunastu zgłoszeniach to łącznie najwyżej kilka dolarów.
 
-Limity ocen: `AI_CLUB_DAILY_LIMIT` dziennie dla całego klubu (domyślnie 100, obejmuje też admina), a na osobę
+Limity ocen: `AI_CLUB_DAILY_LIMIT` dziennie dla całego klubu (domyślnie 25, mieści się w darmowej puli; obejmuje też admina), a na osobę
 `AI_DAILY_LIMIT` dziennie (domyślnie 8) i `AI_COOLDOWN_MINUTES` przerwy (domyślnie 5 min). Liczą się tylko udane
 oceny; admin i opiekun konkursu nie mają limitów osoby. Limit klubu to bezpiecznik kosztów na planie Workers Paid:
 limit wydatków w Cloudflare (Billing → Spend Management) obejmuje tylko żądania i CPU Workerów, nie Workers AI.

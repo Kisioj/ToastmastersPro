@@ -116,7 +116,7 @@ document.addEventListener('click', async (e) => {
   btn.classList.add('busy');
   if (status) {
     status.className = 'status-line small';
-    status.textContent = 'AI ocenia projekt, zwykle trwa to kilkanaście sekund.';
+    status.textContent = 'AI ocenia projekt, zwykle trwa to do minuty.';
   }
   try {
     const res = await fetch(`/api/zgloszenia/${id}/ocena-ai`, { method: 'POST' });
