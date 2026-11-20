@@ -134,3 +134,41 @@ export async function leaderboard(db: D1Database, contestId: number): Promise<Le
     return { ...r, rank };
   });
 }
+
+/** Ocena zgłoszenia przez opiekuna konkursu */
+export const REVIEW_VERDICTS = {
+  ok: { cls: 'ok', text: 'Spełnia wymagania' },
+  fix: { cls: 'warn', text: 'Do poprawy' },
+  reject: { cls: 'err', text: 'Nie spełnia wymagań' },
+} as const;
+export type ReviewVerdict = keyof typeof REVIEW_VERDICTS;
+export const isReviewVerdict = (v: unknown): v is ReviewVerdict => typeof v === 'string' && v in REVIEW_VERDICTS;
+
+export interface EntryReview {
+  id: number;
+  entry_id: number;
+  verdict: ReviewVerdict | null;
+  comment: string;
+  reviewer: string;
+  mailed: number | null;
+  created_at: number;
+}
+
+/** Uwagi do zgłoszeń konkursu, pogrupowane po zgłoszeniu. onlyAuthor: tylko do projektów tej osoby. */
+export async function entryReviews(db: D1Database, contestId: number, onlyAuthor: number | null): Promise<Map<number, EntryReview[]>> {
+  const { results } = await db
+    .prepare(
+      `SELECT r.id, r.entry_id, r.verdict, r.comment, r.mailed, r.created_at, COALESCE(NULLIF(u.name, ''), u.email, '-') AS reviewer
+       FROM entry_reviews r JOIN entries e ON e.id = r.entry_id LEFT JOIN users u ON u.id = r.author_id
+       WHERE e.contest_id = ? ${onlyAuthor === null ? '' : 'AND e.author_id = ?'} ORDER BY r.created_at, r.id`,
+    )
+    .bind(...(onlyAuthor === null ? [contestId] : [contestId, onlyAuthor]))
+    .all<EntryReview>();
+  const map = new Map<number, EntryReview[]>();
+  for (const r of results) {
+    const list = map.get(r.entry_id) ?? [];
+    list.push({ ...r, verdict: isReviewVerdict(r.verdict) ? r.verdict : null });
+    map.set(r.entry_id, list);
+  }
+  return map;
+}

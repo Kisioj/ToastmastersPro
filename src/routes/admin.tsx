@@ -3,7 +3,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv, Contest, ContestSettings, EntryRow, User } from '../env';
 import { aiClubLimit, aiProvider, aiQuotaExhausted, aiUsageToday } from '../lib/ai';
 import { createToken, linkFor } from '../lib/auth';
-import { canManage, computeTallies, getContest, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS } from '../lib/contests';
+import { canManage, computeTallies, getContest, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS, entryReviews } from '../lib/contests';
 import { setFlash, takeFlash } from '../lib/flash';
 import { announcementMail, inviteMail, mailAllowed, mailConfigured, mailDailyLimit, mailsSentLast24h, sendAnnouncement, sendMail } from '../lib/mail';
 import { parseMemberLines } from '../lib/members';
@@ -695,6 +695,7 @@ admin.get('/konkursy/:id', async (c) => {
     : { results: [] as { id: number; name: string; email: string }[] };
   const entries = await listEntries(db, contest.id, true);
   const visible = entries.filter((e) => !e.hidden);
+  const reviews = contest.kind === 'rollup' ? await entryReviews(db, contest.id, null) : new Map();
   const { results: methodsWithVotes } = await db
     .prepare('SELECT method, COUNT(*) AS n FROM ballots WHERE contest_id = ? GROUP BY method')
     .bind(contest.id)
@@ -818,7 +819,7 @@ admin.get('/konkursy/:id', async (c) => {
                 {entries.length === 0 && <p class="empty-note">Nikt jeszcze nie wysłał projektu.</p>}
                 {entries.map((e) => (
                   <div>
-                    <SubmissionCard entry={e} aiOn={aiProvider(c.env) !== null} canDelete={true} author={e.author_id ? authors.get(e.author_id) : undefined} />
+                    <SubmissionCard entry={e} aiOn={aiProvider(c.env) !== null} canDelete={true} author={e.author_id ? authors.get(e.author_id) : undefined} reviews={reviews.get(e.id)} />
                     <form method="post" action={`/admin/propozycje/${e.id}`} class="row" style="margin-top:8px">
                       <input type="hidden" name="action" value={e.hidden ? 'show' : 'hide'} />
                       <button class="btn ghost small" type="submit">

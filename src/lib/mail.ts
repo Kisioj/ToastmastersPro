@@ -203,6 +203,27 @@ export async function sendAnnouncement(
   return { sent, skipped, error };
 }
 
+export function reviewMail(title: string, verdict: string | null, comment: string, reviewer: string, link: string) {
+  const subject = `Uwagi do Twojego projektu „${title}”`;
+  const paragraphs = comment
+    .split(/\n+/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  const intro = `${reviewer} (opiekun konkursu) dodał(a) uwagi do Twojego zgłoszenia „${title}”.`;
+  const v = verdict ? `Ocena: ${verdict}.` : '';
+  const foot = 'Uwagi znajdziesz też przy swoim projekcie na stronie konkursu. Możesz tam wysłać poprawioną wersję.';
+  return {
+    subject,
+    text: `Cześć!\n\n${intro}\n${v ? `\n${v}\n` : ''}\n${paragraphs.join('\n\n')}\n\nZobacz zgłoszenie: ${link}\n\n${foot}\n\nToastmasters Częstochowa`,
+    html: wrapHtml(
+      'Uwagi do Twojego projektu',
+      ['Cześć!', esc(intro), ...(v ? [`<strong>${esc(v)}</strong>`] : []), ...paragraphs.map(esc)],
+      { label: 'Zobacz zgłoszenie', url: link },
+      foot,
+    ),
+  };
+}
+
 export function announcementMail(subject: string, message: string, link: string) {
   const paragraphs = message
     .split(/\n{2,}|\n/)

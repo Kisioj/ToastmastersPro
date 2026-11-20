@@ -346,3 +346,9 @@ dialog.lightbox img { max-height: calc(94vh - 100px); width: auto; margin: 0 aut
 
 /* ranking: wiersz zalogowanej osoby */
 .results li.me .name > span:first-child { color: var(--maroon); font-weight: 800; }
+
+/* uwagi opiekuna konkursu przy zgłoszeniu */
+.reviews { padding: 12px 16px; border-left: 4px solid var(--blue); border-radius: var(--radius); background: #eef5f9; }
+.reviews h4 { margin: 0 0 8px; font-size: 1rem; color: var(--blue-2); }
+.reviews ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
+.reviews .review-text { margin: 4px 0 0; white-space: pre-line; overflow-wrap: anywhere; }

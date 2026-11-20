@@ -31,7 +31,9 @@ i konkurs na projekt rollupu z automatycznym sprawdzaniem plików. Działa w ca�
 - **Admin systemu** (`users.role = 'admin'`): wszystko — członkowie, zaproszenia, maile, tworzenie i usuwanie konkursów,
   przydzielanie opiekunów. Nadawanie/odbieranie: Panel admina → tabela członków → „Nadaj admina” / „Odbierz admina”.
 - **Opiekun konkursu** (tabela `contest_managers`): zarządza tylko przypisanym konkursem — ustawienia i etap, propozycje,
-  zgłoszenia z autorami i plikami, wyniki, zerowanie głosów. Nie widzi listy członków ani innych konkursów.
+  zgłoszenia z autorami i plikami, wyniki, zerowanie głosów. Do zgłoszeń dodaje uwagi z oceną („Spełnia wymagania”,
+  „Do poprawy”, „Nie spełnia wymagań”), które autor widzi przy swoim projekcie i może dostać mailem
+  (tabela `entry_reviews`). Nie widzi listy członków ani innych konkursów.
   Przydziela admin: Panel admina → konkurs → Zarządzaj → „Opiekunowie konkursu”.
 - **Członek**: głosuje, wysyła własne projekty i widzi tylko swoje zgłoszenia (w głosowaniu — projekty bez nazwisk autorów).
 

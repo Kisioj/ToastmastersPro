@@ -1,6 +1,24 @@
 import { Hono } from 'hono';
 import type { AppEnv, Contest, EntryRow, User } from '../env';
-import { canManage, canSeeResults, computeTallies, getContest, isTestMode, leaderboard, listContests, listEntries, managedContestIds, ROLLUP_DEFAULTS, userBallots, type LeaderRow } from '../lib/contests';
+import {
+  canManage,
+  canSeeResults,
+  computeTallies,
+  entryReviews,
+  getContest,
+  isReviewVerdict,
+  isTestMode,
+  leaderboard,
+  listContests,
+  listEntries,
+  managedContestIds,
+  REVIEW_VERDICTS,
+  ROLLUP_DEFAULTS,
+  userBallots,
+  type EntryReview,
+  type LeaderRow,
+} from '../lib/contests';
+import { reviewMail, sendMail } from '../lib/mail';
 import { setFlash, takeFlash } from '../lib/flash';
 import { hashPassword, MIN_PASSWORD, passwordProblem } from '../lib/password';
 import { firstName, fmtDate, fmtDay, fmtSize, safeJson } from '../lib/util';
@@ -113,6 +131,9 @@ member.get('/konkursy/:slug', async (c) => {
         ).results
       : [];
 
+  // uwagi opiekuna: opiekun widzi wszystkie, członek tylko do swoich projektów
+  const reviews = isRollup && (mySubs.length || allSubs.length) ? await entryReviews(db, contest.id, manager ? null : user.id) : new Map<number, EntryReview[]>();
+
   const board = isBoard ? await leaderboard(db, contest.id) : [];
   const visits =
     isBoard && manager
@@ -151,7 +172,7 @@ member.get('/konkursy/:slug', async (c) => {
 
       {isBoard && <Leaderboard contest={contest} rows={board} me={user.id} manager={manager} visits={visits} hosts={hosts} />}
 
-      {isRollup && contest.phase === 'submissions' && <RollupSubmit contest={contest} user={user} mySubs={mySubs} aiOn={aiProvider(c.env) !== null} storeOn={getStore(c.env) !== null} />}
+      {isRollup && contest.phase === 'submissions' && <RollupSubmit contest={contest} user={user} mySubs={mySubs} reviews={reviews} aiOn={aiProvider(c.env) !== null} storeOn={getStore(c.env) !== null} />}
 
       {manager && isRollup && (
         <section class="section tight">
@@ -159,13 +180,21 @@ member.get('/konkursy/:slug', async (c) => {
             <h2>
               Wszystkie zgłoszenia ({allSubs.length}) <span class="pill">{user.role === 'admin' ? 'widok admina' : 'widok opiekuna'}</span>
             </h2>
-            <p class="muted">Członkowie widzą tylko własne projekty, a w głosowaniu same projekty, bez nazwisk autorów.</p>
+            <p class="muted">Członkowie widzą tylko własne projekty, a w głosowaniu same projekty, bez nazwisk autorów. Uwagi, które dodasz do zgłoszenia, zobaczy jego autor.</p>
             {allSubs.length === 0 ? (
               <p class="empty-note">Nikt jeszcze nie wysłał projektu.</p>
             ) : (
               <div class="stack" style="--gap:16px">
                 {allSubs.map((e) => (
-                  <SubmissionCard entry={e} aiOn={aiProvider(c.env) !== null} canDelete={true} author={e.author_id === user.id ? `${e.author} (Ty)` : e.author} anchor={false} />
+                  <SubmissionCard
+                    entry={e}
+                    aiOn={aiProvider(c.env) !== null}
+                    canDelete={true}
+                    author={e.author_id === user.id ? `${e.author} (Ty)` : e.author}
+                    idPrefix="all-entry"
+                    reviews={reviews.get(e.id)}
+                    reviewSlug={contest.slug}
+                  />
                 ))}
               </div>
             )}
@@ -326,7 +355,21 @@ member.get('/konkursy/:slug', async (c) => {
   );
 });
 
-const RollupSubmit = ({ contest, user, mySubs, aiOn, storeOn }: { contest: Contest; user: User; mySubs: EntryRow[]; aiOn: boolean; storeOn: boolean }) => {
+const RollupSubmit = ({
+  contest,
+  user,
+  mySubs,
+  reviews,
+  aiOn,
+  storeOn,
+}: {
+  contest: Contest;
+  user: User;
+  mySubs: EntryRow[];
+  reviews: Map<number, EntryReview[]>;
+  aiOn: boolean;
+  storeOn: boolean;
+}) => {
   const s = { ...ROLLUP_DEFAULTS, ...contest.settings };
   const done = mySubs.filter((e) => e.upload_complete);
   const limitReached = user.role !== 'admin' && done.length >= s.max_entries;
@@ -383,7 +426,7 @@ const RollupSubmit = ({ contest, user, mySubs, aiOn, storeOn }: { contest: Conte
           ) : (
             <div class="stack" style="--gap:16px">
               {mySubs.map((e) => (
-                <SubmissionCard entry={e} aiOn={aiOn} canDelete={true} />
+                <SubmissionCard entry={e} aiOn={aiOn} canDelete={true} reviews={reviews.get(e.id)} />
               ))}
             </div>
           )}
@@ -394,15 +437,36 @@ const RollupSubmit = ({ contest, user, mySubs, aiOn, storeOn }: { contest: Conte
   );
 };
 
-/** anchor=false: karta pokazana drugi raz na stronie (widok admina) — bez zduplikowanego id */
-export const SubmissionCard = ({ entry: e, aiOn, canDelete, author, anchor = true }: { entry: EntryRow; aiOn: boolean; canDelete: boolean; author?: string; anchor?: boolean }) => {
+/**
+ * idPrefix: inny prefiks id, gdy karta jest drugi raz na stronie (widok opiekuna), żeby id się nie powtarzały.
+ * reviews: uwagi opiekuna; reviewSlug: slug konkursu, gdy oglądający może dodawać i usuwać uwagi.
+ */
+export const SubmissionCard = ({
+  entry: e,
+  aiOn,
+  canDelete,
+  author,
+  idPrefix = 'entry',
+  reviews = [],
+  reviewSlug,
+}: {
+  entry: EntryRow;
+  aiOn: boolean;
+  canDelete: boolean;
+  author?: string;
+  idPrefix?: string;
+  reviews?: EntryReview[];
+  reviewSlug?: string;
+}) => {
   const report = safeJson<TechReport | null>(e.report, null);
   const aiRaw = safeJson<(AiReview & { error?: undefined }) | { error: string; created_at: number } | null>(e.ai_report, null);
   const ai = aiRaw && !aiRaw.error ? (aiRaw as AiReview) : null;
   const aiError = aiRaw?.error ?? null;
   const tech = VERDICT_TECH[report?.verdict ?? 'warn'] ?? VERDICT_TECH.warn;
+  const lastVerdict = [...reviews].reverse().find((r) => r.verdict)?.verdict ?? null;
+  const formId = `${idPrefix}-${e.id}-review`;
   return (
-    <article class="card" id={anchor ? `entry-${e.id}` : undefined}>
+    <article class="card" id={`${idPrefix}-${e.id}`}>
       <div class="subm">
         {e.preview_key ? (
           <button type="button" class="thumb-btn" data-lightbox={`/pliki/${e.id}/podglad`} data-title={e.title} aria-label={`Powiększ podgląd: ${e.title}`}>
@@ -418,6 +482,7 @@ export const SubmissionCard = ({ entry: e, aiOn, canDelete, author, anchor = tru
             {e.hidden ? <span class="pill draft">Ukryty</span> : null}
             <span class={`pill ${tech.cls}`}>{tech.text}</span>
             {ai && <span class={`pill ${VERDICT_AI[ai.verdict]?.cls ?? 'warn'}`}>AI: {ai.score}/100</span>}
+            {lastVerdict && <span class={`pill ${REVIEW_VERDICTS[lastVerdict].cls}`}>Opiekun: {REVIEW_VERDICTS[lastVerdict].text}</span>}
             <span class="muted">
               {e.file_name} · {fmtSize(e.file_size)} · {fmtDate(e.created_at)}
               {author ? ` · ${author}` : ''}
@@ -435,6 +500,65 @@ export const SubmissionCard = ({ entry: e, aiOn, canDelete, author, anchor = tru
               <AiReviewView review={ai} error={aiError} />
             </div>
           </details>
+          {reviews.length > 0 && (
+            <section class="reviews" aria-label="Uwagi opiekuna konkursu">
+              <h4>Uwagi opiekuna konkursu</h4>
+              <ul>
+                {reviews.map((r) => (
+                  <li>
+                    <p class="row small" style="margin:0">
+                      {r.verdict && <span class={`pill ${REVIEW_VERDICTS[r.verdict].cls}`}>{REVIEW_VERDICTS[r.verdict].text}</span>}
+                      <span class="muted">
+                        {r.reviewer} · {fmtDate(r.created_at)}
+                        {r.mailed ? ' · autor dostał maila' : ''}
+                      </span>
+                      {reviewSlug && (
+                        <form method="post" action={`/konkursy/${reviewSlug}/uwagi/${r.id}/usun`} class="inline-form" style="margin-left:auto" data-confirm="Usunąć te uwagi?">
+                          <input type="hidden" name="back" value={idPrefix} />
+                          <button type="submit" class="btn ghost small">
+                            Usuń uwagi
+                          </button>
+                        </form>
+                      )}
+                    </p>
+                    {r.comment && <p class="review-text">{r.comment}</p>}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+          {reviewSlug && (
+            <details class="more">
+              <summary>Dodaj uwagi dla autora</summary>
+              <form class="form" method="post" action={`/konkursy/${reviewSlug}/zgloszenia/${e.id}/uwagi`} style="margin-top:12px">
+                <input type="hidden" name="back" value={idPrefix} />
+                <fieldset>
+                  <legend>Ocena</legend>
+                  <label class="check">
+                    <input type="radio" name="verdict" value="" checked />
+                    <span>Bez oceny, tylko komentarz</span>
+                  </label>
+                  {Object.entries(REVIEW_VERDICTS).map(([k, v]) => (
+                    <label class="check">
+                      <input type="radio" name="verdict" value={k} />
+                      <span>{v.text}</span>
+                    </label>
+                  ))}
+                </fieldset>
+                <label for={`${formId}-comment`}>
+                  Uwagi <span class="hint">zobaczy je autor projektu</span>
+                  <textarea id={`${formId}-comment`} name="comment" maxlength={3000} rows={4}></textarea>
+                </label>
+                <label class="check">
+                  <input type="checkbox" name="notify" value="1" checked />
+                  <span>Wyślij autorowi maila z uwagami</span>
+                </label>
+                <button class="btn small" type="submit" style="justify-self:start">
+                  Zapisz uwagi
+                </button>
+              </form>
+            </details>
+          )}
           <div class="row">
             {e.upload_complete && e.file_key ? (
               <a class="btn ghost small" href={`/pliki/${e.id}/plik`}>
@@ -617,6 +741,76 @@ member.post('/konkursy/:slug/goscie/:id/usun', async (c) => {
   await db.prepare('DELETE FROM guest_visits WHERE id = ? AND contest_id = ?').bind(Number(c.req.param('id')), contest.id).run();
   setFlash(c, 'ok', 'Usunięto wpis.');
   return c.redirect(`/konkursy/${contest.slug}`);
+});
+
+/** Dokąd wrócić po dodaniu/usunięciu uwag: do karty w widoku opiekuna albo we własnych zgłoszeniach */
+const backTo = (slug: string, prefix: unknown, entryId: number) =>
+  `/konkursy/${slug}#${prefix === 'entry' ? 'entry' : 'all-entry'}-${entryId}`;
+
+member.post('/konkursy/:slug/zgloszenia/:id/uwagi', async (c) => {
+  const user = c.var.user!;
+  const db = c.env.DB;
+  const contest = await getContest(db, c.req.param('slug'));
+  if (!contest || contest.kind !== 'rollup') return c.notFound();
+  if (!(await canManage(db, user, contest.id))) return c.text('Brak dostępu.', 403);
+  const entry = await db
+    .prepare(
+      `SELECT e.id, e.title, e.author_id, u.email, u.name, u.active FROM entries e LEFT JOIN users u ON u.id = e.author_id
+       WHERE e.id = ? AND e.contest_id = ?`,
+    )
+    .bind(Number(c.req.param('id')), contest.id)
+    .first<{ id: number; title: string; author_id: number | null; email: string | null; name: string | null; active: number | null }>();
+  if (!entry) return c.notFound();
+  const f = await c.req.parseBody();
+  const back = backTo(contest.slug, f.back, entry.id);
+  const verdict = isReviewVerdict(f.verdict) ? f.verdict : null;
+  const comment = String(f.comment ?? '')
+    .replace(/\r\n/g, '\n')
+    .trim()
+    .slice(0, 3000);
+  if (!comment && !verdict) {
+    setFlash(c, 'err', 'Wpisz uwagi albo wybierz ocenę.');
+    return c.redirect(back);
+  }
+  const { meta } = await db
+    .prepare('INSERT INTO entry_reviews (entry_id, author_id, verdict, comment, created_at) VALUES (?, ?, ?, ?, unixepoch())')
+    .bind(entry.id, user.id, verdict, comment)
+    .run();
+
+  let note = '';
+  let mailFailed = false;
+  const toAuthor = f.notify && entry.email && entry.active && entry.author_id !== user.id;
+  if (toAuthor) {
+    const link = `${new URL(c.req.url).origin}/konkursy/${contest.slug}#entry-${entry.id}`;
+    const msg = reviewMail(entry.title, verdict ? REVIEW_VERDICTS[verdict].text : null, comment, user.name || user.email, link);
+    const r = await sendMail(c.env, { to: entry.email!, toName: entry.name ?? undefined, ...msg });
+    if (r.sent) {
+      await db.prepare('UPDATE entry_reviews SET mailed = 1 WHERE id = ?').bind(meta.last_row_id).run();
+      note = ' Autor dostał maila.';
+    } else if (r.mode === 'off') note = ' Wysyłka maili jest wyłączona, więc autor zobaczy uwagi tylko na stronie.';
+    else {
+      mailFailed = true;
+      note = ` Mail do autora nie poszedł: ${r.error ?? 'nieznany błąd'}. Uwagi i tak widać przy projekcie.`;
+    }
+  }
+  setFlash(c, mailFailed ? 'info' : 'ok', `Zapisano uwagi do „${entry.title}”.${note}`);
+  return c.redirect(back);
+});
+
+member.post('/konkursy/:slug/uwagi/:id/usun', async (c) => {
+  const db = c.env.DB;
+  const contest = await getContest(db, c.req.param('slug'));
+  if (!contest || contest.kind !== 'rollup') return c.notFound();
+  if (!(await canManage(db, c.var.user!, contest.id))) return c.text('Brak dostępu.', 403);
+  const row = await db
+    .prepare('SELECT r.entry_id FROM entry_reviews r JOIN entries e ON e.id = r.entry_id WHERE r.id = ? AND e.contest_id = ?')
+    .bind(Number(c.req.param('id')), contest.id)
+    .first<{ entry_id: number }>();
+  if (!row) return c.notFound();
+  await db.prepare('DELETE FROM entry_reviews WHERE id = ?').bind(Number(c.req.param('id'))).run();
+  const f = await c.req.parseBody();
+  setFlash(c, 'ok', 'Usunięto uwagi.');
+  return c.redirect(backTo(contest.slug, f.back, row.entry_id));
 });
 
 member.post('/konkursy/:slug/opinia', async (c) => {
