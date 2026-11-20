@@ -23,6 +23,7 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   AI_DAILY_LIMIT?: string;
   AI_COOLDOWN_MINUTES?: string;
+  AI_CLUB_DAILY_LIMIT?: string;
 }
 
 export interface User {

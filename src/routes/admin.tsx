@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv, Contest, ContestSettings, EntryRow, User } from '../env';
-import { aiProvider, aiQuotaExhausted } from '../lib/ai';
+import { aiClubLimit, aiProvider, aiQuotaExhausted, aiUsageToday } from '../lib/ai';
 import { createToken, linkFor } from '../lib/auth';
 import { canManage, computeTallies, getContest, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS } from '../lib/contests';
 import { setFlash, takeFlash } from '../lib/flash';
@@ -82,6 +82,7 @@ admin.get('/', requireAdmin, async (c) => {
   const store = getStore(c.env);
   const ai = aiProvider(c.env);
   const quotaGone = ai === 'workers-ai' && (await aiQuotaExhausted(c.env));
+  const aiToday = ai ? await aiUsageToday(c.env) : 0;
   const mailOn = mailConfigured(c.env);
   const sent24 = await mailsSentLast24h(c.env);
 
@@ -139,7 +140,7 @@ admin.get('/', requireAdmin, async (c) => {
                 <p class="flash err small">Dzisiejszy darmowy limit Workers AI jest wyczerpany. Oceny wrócą o 1:00 w nocy (latem o 2:00).</p>
               )}
               <p class="muted small">
-                Darmowa pula Cloudflare: ok. 65-70 ocen dziennie. Limit aplikacji: {c.env.AI_DAILY_LIMIT || 8} ocen dziennie na osobę i {c.env.AI_COOLDOWN_MINUTES || 5} min przerwy między ocenami (admin i opiekun konkursu bez limitu).
+                Dziś: {aiToday} z {aiClubLimit(c.env)} ocen (limit całego klubu). Darmowa pula Cloudflare: ok. 65-70 ocen dziennie. Na osobę: {c.env.AI_DAILY_LIMIT || 8} ocen dziennie i {c.env.AI_COOLDOWN_MINUTES || 5} min przerwy między ocenami (admin i opiekun konkursu bez limitu osoby).
               </p>
             </div>
             <div class="card">

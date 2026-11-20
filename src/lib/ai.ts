@@ -235,17 +235,35 @@ export async function reviewDesign(env: Env, input: { imageB64: string; title: s
 }
 
 /**
- * Limity ocen AI na osobę (admin i opiekun konkursu bez limitów):
- *  - AI_DAILY_LIMIT ocen dziennie (domyślnie 8),
- *  - AI_COOLDOWN_MINUTES przerwy między ocenami (domyślnie 5).
+ * Limity ocen AI:
+ *  - AI_CLUB_DAILY_LIMIT ocen dziennie dla całego klubu, wszyscy razem, także admin (domyślnie 100).
+ *    Twardy bezpiecznik kosztów: limit wydatków Cloudflare nie obejmuje Workers AI.
+ *  - na osobę (admin i opiekun konkursu bez tych limitów):
+ *    AI_DAILY_LIMIT ocen dziennie (domyślnie 8) i AI_COOLDOWN_MINUTES przerwy między ocenami (domyślnie 5).
  * Liczone są tylko udane oceny: błąd albo wyczerpana pula nie zużywa limitu.
  */
-export async function aiLimitCheck(env: Env, userId: number): Promise<string | null> {
+export function aiClubLimit(env: Env): number {
+  return Number(env.AI_CLUB_DAILY_LIMIT || 100);
+}
+
+export async function aiUsageToday(env: Env): Promise<number> {
+  const row = await env.DB.prepare('SELECT COALESCE(SUM(count), 0) AS total FROM ai_usage WHERE day = ?').bind(utcDay()).first<{ total: number }>();
+  return row?.total ?? 0;
+}
+
+export async function aiLimitCheck(env: Env, userId: number, perUser = true): Promise<string | null> {
+  const day = utcDay();
+  const [mineRes, allRes] = await env.DB.batch([
+    env.DB.prepare('SELECT count, last_at FROM ai_usage WHERE user_id = ? AND day = ?').bind(userId, day),
+    env.DB.prepare('SELECT COALESCE(SUM(count), 0) AS total FROM ai_usage WHERE day = ?').bind(day),
+  ]);
+  const club = aiClubLimit(env);
+  const total = (allRes.results[0] as { total: number } | undefined)?.total ?? 0;
+  if (total >= club) return `Klub wykorzystał dzisiejszy limit ocen AI (${club}). Ocena będzie znowu dostępna jutro.`;
+  if (!perUser) return null;
+  const row = mineRes.results[0] as { count: number; last_at: number | null } | undefined;
   const limit = Number(env.AI_DAILY_LIMIT || 8);
   const cooldown = Number(env.AI_COOLDOWN_MINUTES || 5) * 60;
-  const row = await env.DB.prepare('SELECT count, last_at FROM ai_usage WHERE user_id = ? AND day = ?')
-    .bind(userId, new Date().toISOString().slice(0, 10))
-    .first<{ count: number; last_at: number | null }>();
   if ((row?.count ?? 0) >= limit) return `Wykorzystano dzienny limit ocen AI (${limit}). Spróbuj jutro.`;
   const since = row?.last_at ? now() - row.last_at : Infinity;
   if (since < cooldown) {
@@ -260,6 +278,6 @@ export async function recordAiUse(env: Env, userId: number): Promise<void> {
     `INSERT INTO ai_usage (user_id, day, count, last_at) VALUES (?, ?, 1, unixepoch())
      ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1, last_at = unixepoch()`,
   )
-    .bind(userId, new Date().toISOString().slice(0, 10))
+    .bind(userId, utcDay())
     .run();
 }

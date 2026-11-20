@@ -52,6 +52,8 @@
     "CLAUDE_MODEL": "claude-opus-5-5",
     // limity ocen AI na osobę: darmowa pula Cloudflare to ok. 65-70 ocen dziennie na cały klub
     "AI_DAILY_LIMIT": "8",
-    "AI_COOLDOWN_MINUTES": "5"
+    "AI_COOLDOWN_MINUTES": "5",
+    // twardy dzienny limit ocen AI dla całego klubu (bezpiecznik kosztów, limit wydatków Cloudflare nie obejmuje Workers AI)
+    "AI_CLUB_DAILY_LIMIT": "100"
   }
 }

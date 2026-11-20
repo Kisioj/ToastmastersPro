@@ -201,14 +201,13 @@ api.post('/api/zgloszenia/:id/zakoncz', async (c) => {
 async function runAi(c: Context<AppEnv>, imageB64: string, title: string, report: unknown, unlimited = false) {
   const user = c.var.user!;
   const limited = !unlimited && user.role !== 'admin';
-  if (limited) {
-    const blocked = await aiLimitCheck(c.env, user.id);
-    if (blocked) return { error: blocked, status: 429 as const };
-  }
+  // limit klubu obowiązuje wszystkich, limity osoby tylko zwykłych członków
+  const blocked = await aiLimitCheck(c.env, user.id, limited);
+  if (blocked) return { error: blocked, status: 429 as const };
   try {
     const review = await reviewDesign(c.env, { imageB64, title, report });
-    // liczymy tylko udane oceny
-    if (limited) await recordAiUse(c.env, user.id);
+    // liczymy tylko udane oceny (także admina, żeby wliczały się do limitu klubu)
+    await recordAiUse(c.env, user.id);
     return { review };
   } catch (e) {
     console.error('AI', e);
