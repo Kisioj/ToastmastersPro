@@ -14,6 +14,8 @@ import {
   listContests,
   listEntries,
   managedContestIds,
+  contestVoters,
+  type Voters,
   REVIEW_VERDICTS,
   ROLLUP_DEFAULTS,
   userBallots,
@@ -32,6 +34,8 @@ import { JsonData, Layout, PageHead, PasswordInput, PhasePill } from '../views/l
 import { AiReviewView, TechReportView, VERDICT_AI, VERDICT_TECH, type TechReport } from '../views/reports';
 
 export const member = new Hono<AppEnv>();
+
+const isBoardKind = (c: Contest) => c.kind === 'leaderboard';
 
 const ctaFor = (c: Contest, voted: boolean) => {
   if (c.kind === 'leaderboard') return 'Zobacz ranking';
@@ -106,6 +110,7 @@ member.get('/konkursy/:slug', async (c) => {
     .bind(contest.id, user.id)
     .first<{ preferred: string; comment: string }>();
   const testMode = isTestMode(contest);
+  const voters = manager && !isBoardKind(contest) && contest.phase !== 'submissions' ? await contestVoters(db, contest.id) : null;
   // odpowiedzi na ankietę „który sposób najlepszy” widzi admin i opiekun konkursu
   const allFeedback =
     manager && testMode
@@ -293,6 +298,12 @@ member.get('/konkursy/:slug', async (c) => {
               </div>
             )}
 
+            {voters && (
+              <div style="margin-top:36px">
+                <VotersCard voters={voters} testMode={testMode} />
+              </div>
+            )}
+
             {testMode && contest.phase === 'voting' && (
               <form class="form card" method="post" action={`/konkursy/${contest.slug}/opinia`} style="margin-top:36px">
                 <h2 style="margin:0">Który sposób głosowania jest najlepszy?</h2>
@@ -380,6 +391,47 @@ member.get('/konkursy/:slug', async (c) => {
     </Layout>,
   );
 });
+
+/** Kto już zagłosował: tylko imiona i sposoby, bez treści głosów (widzi admin i opiekun konkursu) */
+export const VotersCard = ({ voters, testMode }: { voters: Voters; testMode: boolean }) => (
+  <section class="card stack" style="--gap:14px" aria-labelledby="voters-h">
+    <h2 id="voters-h" style="margin:0">
+      Kto już zagłosował ({voters.voted.length}) <span class="pill">widzi tylko admin i opiekun</span>
+    </h2>
+    <p class="hint" style="margin:0">
+      Widać tylko, kto oddał głos, nie jak głosował. Członkowie tej listy nie widzą.
+    </p>
+    {voters.voted.length === 0 ? (
+      <p class="empty-note">Nikt jeszcze nie zagłosował.</p>
+    ) : (
+      <ul class="voters">
+        {voters.voted.map((v) => (
+          <li>
+            <strong>{v.who}</strong>
+            {testMode && (
+              <span class="voter-methods">
+                {v.methods.map((m) => (
+                  <span class="pill">{METHODS[m].short}</span>
+                ))}
+              </span>
+            )}
+            <span class="muted small">{fmtDate(v.last)}</span>
+          </li>
+        ))}
+      </ul>
+    )}
+    {voters.notYet.length > 0 && (
+      <details class="more">
+        <summary>
+          Jeszcze nie głosowali ({voters.notYet.length})
+        </summary>
+        <p class="small" style="margin:8px 0 0">
+          {voters.notYet.join(', ')}
+        </p>
+      </details>
+    )}
+  </section>
+);
 
 /** Podsumowanie ankiety o sposobach głosowania (tylko admin i opiekun konkursu) */
 const FeedbackSummary = ({ contest, feedback }: { contest: Contest; feedback: { preferred: string; comment: string; who: string }[] }) => {

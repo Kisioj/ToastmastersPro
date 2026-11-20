@@ -14,6 +14,7 @@ i konkurs na projekt rollupu z automatycznym sprawdzaniem plików. Działa w ca�
   Zaznacz jeden sposób = oficjalne głosowanie; kilka = **tryb testowy** (każdy sposób w osobnej zakładce
   + ankieta „który sposób najlepszy?”, a w panelu admina tabela porównania zwycięzców wg metod).
   Głos w każdym sposobie można zmienić albo wycofać („Wycofaj głos”) do końca głosowania.
+  Admin i opiekun widzą „Kto już zagłosował” (imiona, sposoby, godzina; bez treści głosów) i kto jeszcze nie.
 - **Konkurs na rollup 85 × 200 cm.** Przeglądarka analizuje plik (PDF/SVG/JPG/PNG/WebP): proporcje,
   skalę (1:1, 1:2, 1:5, 1:10), efektywne DPI każdej grafiki rastrowej w PDF, osadzenie czcionek,
   zgodność czcionek i udział kolorów marki (Loyal Blue, True Maroon, Cool Gray, Happy Yellow).

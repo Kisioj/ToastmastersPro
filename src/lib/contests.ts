@@ -1,5 +1,5 @@
 import type { Contest, ContestRow, EntryRow, User } from '../env';
-import { parseMethods, tally, type MethodId, type Tally } from './voting';
+import { isMethod, parseMethods, tally, type MethodId, type Tally } from './voting';
 import { safeJson } from './util';
 
 export const PHASES = {
@@ -172,4 +172,37 @@ export async function entryReviews(db: D1Database, contestId: number, onlyAuthor
     map.set(r.entry_id, list);
   }
   return map;
+}
+
+export interface Voters {
+  voted: { who: string; methods: MethodId[]; last: number }[];
+  notYet: string[];
+}
+
+/** Kto już zagłosował (w których sposobach i kiedy ostatnio) i kto z aktywnych jeszcze nie. Bez treści głosów. */
+export async function contestVoters(db: D1Database, contestId: number): Promise<Voters> {
+  const [voted, notYet] = await db.batch<Record<string, unknown>>([
+    db
+      .prepare(
+        `SELECT COALESCE(NULLIF(u.name, ''), u.email) AS who, GROUP_CONCAT(b.method) AS methods, MAX(b.updated_at) AS last
+         FROM ballots b JOIN users u ON u.id = b.user_id WHERE b.contest_id = ? GROUP BY b.user_id ORDER BY who`,
+      )
+      .bind(contestId),
+    db
+      .prepare(
+        `SELECT COALESCE(NULLIF(name, ''), email) AS who FROM users
+         WHERE active = 1 AND id NOT IN (SELECT user_id FROM ballots WHERE contest_id = ?) ORDER BY who`,
+      )
+      .bind(contestId),
+  ]);
+  return {
+    voted: voted.results.map((r) => ({
+      who: String(r.who),
+      methods: String(r.methods ?? '')
+        .split(',')
+        .filter(isMethod) as MethodId[],
+      last: Number(r.last),
+    })),
+    notYet: notYet.results.map((r) => String(r.who)),
+  };
 }

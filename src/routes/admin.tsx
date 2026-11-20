@@ -3,7 +3,7 @@ import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv, Contest, ContestSettings, EntryRow, User } from '../env';
 import { aiClubLimit, aiProvider, aiQuotaExhausted, aiUsageToday } from '../lib/ai';
 import { createToken, linkFor, refererPath, SEEN_EVERY, setPreview } from '../lib/auth';
-import { canManage, computeTallies, getContest, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS, entryReviews } from '../lib/contests';
+import { canManage, computeTallies, contestVoters, getContest, isTestMode, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS, entryReviews } from '../lib/contests';
 import { setFlash, takeFlash } from '../lib/flash';
 import { announcementMail, inviteMail, mailAllowed, mailConfigured, mailDailyLimit, mailsSentLast24h, sendAnnouncement, sendMail } from '../lib/mail';
 import { parseMemberLines } from '../lib/members';
@@ -11,7 +11,7 @@ import { deleteParts, getStore } from '../lib/storage';
 import { fmtDate, fmtDay, now, slugify } from '../lib/util';
 import { isMethod, METHOD_IDS, METHODS, plural, type MethodId } from '../lib/voting';
 import { Layout, PageHead, PhasePill, ResultsList } from '../views/layout';
-import { SubmissionCard } from './member';
+import { SubmissionCard, VotersCard } from './member';
 
 export const admin = new Hono<AppEnv>();
 
@@ -1003,6 +1003,7 @@ admin.get('/konkursy/:id', async (c) => {
     )
     .bind(contest.id)
     .all<{ preferred: string; comment: string; updated_at: number; name: string; email: string }>();
+  const voters = contest.kind === 'leaderboard' ? null : await contestVoters(db, contest.id);
   const { results: voterCount } = await db
     .prepare('SELECT COUNT(DISTINCT user_id) AS n FROM ballots WHERE contest_id = ?')
     .bind(contest.id)
@@ -1090,6 +1091,11 @@ admin.get('/konkursy/:id', async (c) => {
                     </li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {voters && (
+              <div style="margin-top:20px">
+                <VotersCard voters={voters} testMode={isTestMode(contest)} />
               </div>
             )}
           </div>

@@ -369,3 +369,10 @@ dialog.mail-dialog .mail-frame { height: min(52vh, 620px); }
 .reviews h4 { margin: 0 0 8px; font-size: 1rem; color: var(--blue-2); }
 .reviews ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 12px; }
 .reviews .review-text { margin: 4px 0 0; white-space: pre-line; overflow-wrap: anywhere; }
+
+/* kto już zagłosował */
+.voters { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.voters li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.voters li:last-child { border-bottom: 0; }
+.voter-methods { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.voters .muted { margin-left: auto; }
