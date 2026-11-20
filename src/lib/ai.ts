@@ -190,11 +190,48 @@ async function viaWorkersAi(env: Env, imageB64: string, userText: string): Promi
   return normalize(parsed, 'workers-ai', model);
 }
 
+/** Komunikat, gdy skończy się darmowa dzienna pula Workers AI (10 000 „neuronów”, odnawia się o 00:00 UTC) */
+export const AI_QUOTA_MSG =
+  'Na dziś wyczerpał się darmowy limit oceny AI. Spróbuj jutro: limit odnawia się o 1:00 w nocy (latem o 2:00). Projekt możesz wysłać normalnie, a ocenę uruchomisz później przyciskiem przy zgłoszeniu.';
+const QUOTA_KEY = 'workers_ai_quota_exhausted';
+const utcDay = () => new Date().toISOString().slice(0, 10);
+
+/** Czy dzisiaj (UTC) wyczerpano już darmowy limit Workers AI */
+export async function aiQuotaExhausted(env: Env): Promise<boolean> {
+  const row = await env.DB.prepare('SELECT value FROM app_state WHERE key = ?').bind(QUOTA_KEY).first<{ value: string }>();
+  return row?.value === utcDay();
+}
+
+/** Błędy Workers AI po polsku (oryginał trafia do logów) */
+function friendlyWorkersAiError(e: unknown): { message: string; quota: boolean } {
+  const raw = e instanceof Error ? e.message : String(e);
+  if (/3036|4006|daily free allocation|account limited|neurons/i.test(raw)) return { message: AI_QUOTA_MSG, quota: true };
+  if (/capacity|rate limit|too many requests|3040|429/i.test(raw)) return { message: 'Usługa AI jest chwilowo przeciążona. Spróbuj za kilka minut.', quota: false };
+  if (/timeout|timed out|3007/i.test(raw)) return { message: 'Ocena AI trwała za długo. Spróbuj ponownie.', quota: false };
+  return { message: 'Ocena AI nie powiodła się. Spróbuj ponownie za chwilę.', quota: false };
+}
+
 export async function reviewDesign(env: Env, input: { imageB64: string; title: string; report: unknown }): Promise<AiReview> {
   const provider = aiProvider(env);
   if (!provider) throw new Error('Ocena AI nie jest skonfigurowana.');
   const text = reportText(input.title, input.report);
-  return provider === 'claude' ? viaClaude(env, input.imageB64, text) : viaWorkersAi(env, input.imageB64, text);
+  if (provider === 'claude') return viaClaude(env, input.imageB64, text);
+  // limit już wyczerpany dzisiaj: nie czekamy na wolną odpowiedź z błędem
+  if (await aiQuotaExhausted(env)) throw new Error(AI_QUOTA_MSG);
+  try {
+    return await viaWorkersAi(env, input.imageB64, text);
+  } catch (e) {
+    console.error('Workers AI', e);
+    const f = friendlyWorkersAiError(e);
+    if (f.quota) {
+      await env.DB.prepare(
+        'INSERT INTO app_state (key, value, updated_at) VALUES (?, ?, unixepoch()) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at',
+      )
+        .bind(QUOTA_KEY, utcDay())
+        .run();
+    }
+    throw new Error(f.message);
+  }
 }
 
 /** Dzienny limit ocen AI na osobę (admin bez limitu). Zwraca false, gdy limit wyczerpany. */

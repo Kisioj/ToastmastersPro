@@ -219,7 +219,14 @@ api.post('/api/zgloszenia/:id/ocena-ai', async (c) => {
   if (!stream) return err(c, 'Nie znaleziono podglądu.', 404);
   const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
   const out = await runAi(c, b64(bytes), e.title, safeJson(e.report, {}), e.manager);
-  if ('error' in out) return err(c, out.error!, 502);
+  if ('error' in out) {
+    // zapamiętaj powód przy zgłoszeniu, chyba że jest już udana ocena
+    const prev = safeJson<{ error?: string } | null>(e.ai_report, null);
+    if (!prev || prev.error) {
+      await c.env.DB.prepare('UPDATE entries SET ai_report = ? WHERE id = ?').bind(JSON.stringify({ error: out.error, created_at: now() }), e.id).run();
+    }
+    return err(c, out.error!, 502);
+  }
   await c.env.DB.prepare('UPDATE entries SET ai_report = ? WHERE id = ?').bind(JSON.stringify(out.review), e.id).run();
   const html = await (<AiReviewView review={out.review!} />).toString();
   return c.json({ ok: true, review: out.review, html });

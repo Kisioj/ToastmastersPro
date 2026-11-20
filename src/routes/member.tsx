@@ -397,7 +397,9 @@ const RollupSubmit = ({ contest, user, mySubs, aiOn, storeOn }: { contest: Conte
 /** anchor=false: karta pokazana drugi raz na stronie (widok admina) — bez zduplikowanego id */
 export const SubmissionCard = ({ entry: e, aiOn, canDelete, author, anchor = true }: { entry: EntryRow; aiOn: boolean; canDelete: boolean; author?: string; anchor?: boolean }) => {
   const report = safeJson<TechReport | null>(e.report, null);
-  const ai = safeJson<AiReview | null>(e.ai_report, null);
+  const aiRaw = safeJson<(AiReview & { error?: undefined }) | { error: string; created_at: number } | null>(e.ai_report, null);
+  const ai = aiRaw && !aiRaw.error ? (aiRaw as AiReview) : null;
+  const aiError = aiRaw?.error ?? null;
   const tech = VERDICT_TECH[report?.verdict ?? 'warn'] ?? VERDICT_TECH.warn;
   return (
     <article class="card" id={anchor ? `entry-${e.id}` : undefined}>
@@ -427,10 +429,10 @@ export const SubmissionCard = ({ entry: e, aiOn, canDelete, author, anchor = tru
               <TechReportView report={report} />
             </div>
           </details>
-          <details class="more" open={Boolean(ai)}>
+          <details class="more" open={Boolean(ai || aiError)}>
             <summary>Zgodność z brand manualem (AI)</summary>
             <div style="margin-top:10px" data-ai-box={e.id}>
-              <AiReviewView review={ai} />
+              <AiReviewView review={ai} error={aiError} />
             </div>
           </details>
           <div class="row">
@@ -441,7 +443,7 @@ export const SubmissionCard = ({ entry: e, aiOn, canDelete, author, anchor = tru
             ) : null}
             {aiOn && e.preview_key && (
               <button type="button" class="btn ghost small" data-ai-run={e.id}>
-                {ai ? 'Oceń ponownie (AI)' : 'Oceń zgodność (AI)'}
+                {ai ? 'Oceń ponownie (AI)' : aiError ? 'Spróbuj ponownie (AI)' : 'Oceń zgodność (AI)'}
               </button>
             )}
             {canDelete && (
