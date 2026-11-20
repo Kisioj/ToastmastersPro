@@ -30,6 +30,8 @@ i konkurs na projekt rollupu z automatycznym sprawdzaniem plików. Działa w ca�
 
 - **Admin systemu** (`users.role = 'admin'`): wszystko — członkowie, zaproszenia, maile, tworzenie i usuwanie konkursów,
   przydzielanie opiekunów. Nadawanie/odbieranie: Panel admina → tabela członków → „Nadaj admina” / „Odbierz admina”.
+  „Podgląd członka” w menu pokazuje stronę tak, jak widzi ją zwykły członek (rola `member`, bez uprawnień opiekuna,
+  panel admina zamknięty); żółty pasek u góry wraca do widoku admina. Działa na koncie admina, więc głosy się zapisują.
 - **Opiekun konkursu** (tabela `contest_managers`): zarządza tylko przypisanym konkursem — ustawienia i etap, propozycje,
   zgłoszenia z autorami i plikami, wyniki, zerowanie głosów. Do zgłoszeń dodaje uwagi z oceną („Spełnia wymagania”,
   „Do poprawy”, „Nie spełnia wymagań”), które autor widzi przy swoim projekcie i może dostać mailem
@@ -88,7 +90,10 @@ nawet na 24 h, także ręczną korespondencję klubu):
 - maile idą wyłącznie do aktywnych osób z listy członków,
 - maks. 1 mail na 5 minut na adres (link do logowania lub zaproszenie),
 - maks. `MAIL_DAILY_LIMIT` maili na dobę z całej aplikacji (domyślnie 300),
-- zaproszenia hurtowe po 8 naraz (darmowy plan Workers: maks. 50 podżądań na żądanie, D1 i SMTP też się liczą).
+- zaproszenia hurtowe po 8 naraz (darmowy plan Workers: maks. 50 podżądań na żądanie, D1 i SMTP też się liczą);
+  przed wysłaniem pytanie z listą tych 8 osób i wychodzi dokładnie do nich,
+- przy każdej osobie „Link do skopiowania” tworzy link z zaproszeniem bez wysyłania maila (do przesłania np. SMS-em),
+  a „Wyślij zaproszenie” pyta przed wysłaniem. Nowy link unieważnia poprzedni, więc wtedy też jest pytanie.
 
 ### Import listy członków
 

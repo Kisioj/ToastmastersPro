@@ -5,6 +5,8 @@ import { now, randomToken, sha256hex } from './util';
 
 const COOKIE = 'tm_session';
 const SESSION_DAYS = 60;
+/** Podgląd jako członek. Ciasteczko działa tylko dla admina i tylko odbiera uprawnienia, więc nie trzeba go podpisywać. */
+const PREVIEW_COOKIE = 'tm_preview';
 
 export const TOKEN_TTL = {
   set_password: 14 * 24 * 3600, // link z zaproszeniem: 14 dni
@@ -56,10 +58,27 @@ export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
       .bind(hash, now())
       .first<User>();
   }
+  if (user?.role === 'admin' && getCookie(c, PREVIEW_COOKIE) === '1') user = { ...user, role: 'member', preview: true };
   c.set('user', user);
   c.set('sessionHash', user ? hash : null);
   await next();
 };
+
+export function setPreview(c: Context<AppEnv>, on: boolean): void {
+  if (on) setCookie(c, PREVIEW_COOKIE, '1', { httpOnly: true, secure: true, sameSite: 'Lax', path: '/', maxAge: 12 * 3600 });
+  else deleteCookie(c, PREVIEW_COOKIE, { path: '/', secure: true });
+}
+
+/** Ścieżka strony, z której przyszło żądanie (nagłówek Referer z tej samej domeny), do powrotu po akcji */
+export function refererPath(c: Context, fallback: string): string {
+  try {
+    const ref = new URL(c.req.header('referer') ?? '');
+    if (ref.host !== new URL(c.req.url).host) return fallback;
+    return safeNext(ref.pathname + ref.search);
+  } catch {
+    return fallback;
+  }
+}
 
 /** Proste zabezpieczenie CSRF: żądania zmieniające dane muszą pochodzić z tej samej domeny */
 export const sameOrigin: MiddlewareHandler<AppEnv> = async (c, next) => {

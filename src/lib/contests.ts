@@ -87,6 +87,7 @@ export async function computeTallies(db: D1Database, contest: Contest, methods: 
 
 /** Admin systemu zarządza wszystkim; opiekun — tylko przypisanymi konkursami */
 export async function canManage(db: D1Database, user: User, contestId: number): Promise<boolean> {
+  if (user.preview) return false;
   if (user.role === 'admin') return true;
   const row = await db.prepare('SELECT 1 AS ok FROM contest_managers WHERE contest_id = ? AND user_id = ?').bind(contestId, user.id).first();
   return Boolean(row);

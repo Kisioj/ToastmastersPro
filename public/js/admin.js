@@ -1,22 +1,36 @@
-// Panel admina: generowanie linków z zaproszeniem (z wysyłką maila, jeśli SMTP działa).
+// Panel admina: linki z zaproszeniem. „Link do skopiowania” niczego nie wysyła, „Wyślij zaproszenie” wysyła maila.
+// Przed mailem (i przed nowym linkiem, który unieważnia poprzedni) pytamy o potwierdzenie.
 
 document.addEventListener('click', async (e) => {
-  const btn = e.target.closest('[data-invite]');
+  const btn = e.target.closest('[data-invite], [data-invite-link]');
   if (!btn || btn.getAttribute('aria-disabled') === 'true') return;
-  const id = btn.dataset.invite;
+  const byMail = btn.hasAttribute('data-invite');
+  const id = byMail ? btn.dataset.invite : btn.dataset.inviteLink;
+  if (btn.dataset.ask && !window.confirm(btn.dataset.ask)) return;
   const out = document.querySelector(`[data-invite-out="${id}"]`);
   btn.setAttribute('aria-disabled', 'true');
   btn.classList.add('busy');
   try {
-    const res = await fetch(`/admin/czlonkowie/${id}/zaproszenie`, { method: 'POST' });
+    const res = await fetch(`/admin/czlonkowie/${id}/${byMail ? 'zaproszenie' : 'link'}`, { method: 'POST' });
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || 'Nie udało się.');
-    const linkId = `invite-link-${id}`;
-    const msg = data.sent
-      ? `Wysłano maila na ${btn.dataset.email}. Link (ważny 14 dni) możesz też przesłać sam:`
-      : data.mode === 'off'
-        ? 'Maile są wyłączone. Skopiuj link i wyślij go tej osobie (ważny 14 dni):'
+    let copied = false;
+    if (!byMail) {
+      try {
+        await navigator.clipboard.writeText(data.link);
+        copied = true;
+      } catch {
+        // np. Safari po await: zostaje przycisk „Kopiuj link”
+      }
+    }
+    const msg = !byMail
+      ? copied
+        ? 'Link skopiowany do schowka. Mail nie został wysłany: prześlij link tej osobie sam (ważny 14 dni).'
+        : 'Mail nie został wysłany. Skopiuj link i prześlij go tej osobie sam (ważny 14 dni):'
+      : data.sent
+        ? `Wysłano maila na ${btn.dataset.email}. Link (ważny 14 dni) możesz też przesłać sam:`
         : `Mail nie wyszedł (${data.error}). Skopiuj link i wyślij go ręcznie:`;
+    const linkId = `invite-link-${id}`;
     const wrap = document.createElement('div');
     wrap.className = 'link-out';
     const p = document.createElement('span');
@@ -41,7 +55,11 @@ document.addEventListener('click', async (e) => {
     copyWrap.append(copyBtn, bubble);
     wrap.append(p, code, copyWrap);
     out.replaceChildren(wrap);
-    btn.textContent = 'Nowy link do hasła';
+    // osoba ma już link: kolejne kliknięcia (oba przyciski) tworzą nowy link i pytają o zgodę
+    for (const b of document.querySelectorAll(`[data-invite="${id}"], [data-invite-link="${id}"]`)) {
+      b.dataset.ask = b.dataset.askAgain;
+      b.textContent = b.dataset.labelAgain;
+    }
   } catch (err) {
     out.replaceChildren(Object.assign(document.createElement('p'), { className: 'flash err small', textContent: err.message }));
   } finally {

@@ -18,6 +18,7 @@ import {
   type EntryReview,
   type LeaderRow,
 } from '../lib/contests';
+import { refererPath, setPreview } from '../lib/auth';
 import { reviewMail, sendMail } from '../lib/mail';
 import { setFlash, takeFlash } from '../lib/flash';
 import { hashPassword, MIN_PASSWORD, passwordProblem } from '../lib/password';
@@ -41,7 +42,7 @@ const ctaFor = (c: Contest, voted: boolean) => {
 member.get('/', async (c) => {
   const user = c.var.user!;
   const isAdmin = user.role === 'admin';
-  const managed = isAdmin ? new Set<number>() : await managedContestIds(c.env.DB, user.id);
+  const managed = isAdmin || user.preview ? new Set<number>() : await managedContestIds(c.env.DB, user.id);
   const contests = (await listContests(c.env.DB, true)).filter((ct) => ct.phase !== 'draft' || isAdmin || managed.has(ct.id));
   const { results: voted } = await c.env.DB.prepare('SELECT DISTINCT contest_id FROM ballots WHERE user_id = ?').bind(user.id).all<{ contest_id: number }>();
   const votedSet = new Set(voted.map((v) => v.contest_id));
@@ -832,6 +833,12 @@ member.post('/konkursy/:slug/opinia', async (c) => {
     .run();
   setFlash(c, 'ok', 'Dzięki! Zapisaliśmy Twoją opinię.');
   return c.redirect(`/konkursy/${contest.slug}`);
+});
+
+/** Koniec podglądu jako członek: wracamy na tę samą stronę, już w widoku admina */
+member.post('/podglad/koniec', (c) => {
+  setPreview(c, false);
+  return c.redirect(refererPath(c, '/admin'));
 });
 
 member.get('/konto', (c) => {

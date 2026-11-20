@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv, Contest, ContestSettings, EntryRow, User } from '../env';
 import { aiClubLimit, aiProvider, aiQuotaExhausted, aiUsageToday } from '../lib/ai';
-import { createToken, linkFor } from '../lib/auth';
+import { createToken, linkFor, refererPath, setPreview } from '../lib/auth';
 import { canManage, computeTallies, getContest, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS, entryReviews } from '../lib/contests';
 import { setFlash, takeFlash } from '../lib/flash';
 import { announcementMail, inviteMail, mailAllowed, mailConfigured, mailDailyLimit, mailsSentLast24h, sendAnnouncement, sendMail } from '../lib/mail';
@@ -20,15 +20,40 @@ const INVITE_BATCH = 8;
 
 /** Tylko admin systemu: członkowie, maile, tworzenie i usuwanie konkursów, przydzielanie opiekunów */
 const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (c.var.user?.preview) return previewDenied(c);
   if (c.var.user?.role !== 'admin') return c.text('Brak dostępu. To tylko dla admina systemu.', 403);
   await next();
 };
 
 /** Admin systemu albo opiekun tego konkursu */
 async function guardContest(c: Context<AppEnv>, contestId: number): Promise<Response | null> {
+  if (c.var.user?.preview) return previewDenied(c);
   if (!Number.isInteger(contestId) || !(await canManage(c.env.DB, c.var.user!, contestId))) return c.text('Brak dostępu do tego konkursu.', 403);
   return null;
 }
+
+/** W podglądzie członka strony admina są zamknięte jak dla członka, ale z paskiem „Wróć do widoku admina” */
+function previewDenied(c: Context<AppEnv>) {
+  if (c.req.method !== 'GET') return c.text('Jesteś w podglądzie jako członek. Wróć do widoku admina (przycisk na górze strony) i spróbuj ponownie.', 403);
+  return c.html(
+    <Layout title="Brak dostępu" user={c.var.user}>
+      <section class="section">
+        <div class="wrap narrow stack">
+          <h1>To strona tylko dla admina</h1>
+          <p>Zwykły członek klubu nie ma tu wstępu, więc w podglądzie też jej nie zobaczysz. Wróć do widoku admina przyciskiem na żółtym pasku u góry.</p>
+        </div>
+      </section>
+    </Layout>,
+    403,
+  );
+}
+
+/** Podgląd jako członek: ta sama strona (poza panelem admina) bez uprawnień admina i opiekuna */
+admin.post('/podglad', requireAdmin, (c) => {
+  setPreview(c, true);
+  const back = refererPath(c, '/');
+  return c.redirect(back.startsWith('/admin') ? '/' : back);
+});
 
 /** Domyślna treść powiadomienia zależnie od rodzaju i etapu konkursu (bez długich myślników) */
 function announcementTemplate(ct: Contest): { subject: string; message: string } | null {
@@ -72,6 +97,21 @@ async function sendInvite(c: Context<AppEnv>, u: User) {
   return { link, ...res };
 }
 
+/** Link z zaproszeniem bez maila: admin przesyła go sam (SMS, komunikator). Osoba liczy się jako zaproszona. */
+async function inviteLink(c: Context<AppEnv>, u: User): Promise<string> {
+  const token = await createToken(c.env.DB, u.id, 'set_password');
+  await c.env.DB.prepare('UPDATE users SET invited_at = ? WHERE id = ?').bind(now(), u.id).run();
+  return linkFor(c, 'set_password', token);
+}
+
+/** Teksty pytań przed utworzeniem linku: nowy link unieważnia poprzedni */
+function inviteAsk(u: User, byMail: boolean, again: boolean): string {
+  const who = u.name ? `${u.name} (${u.email})` : u.email;
+  const old = ' Jeśli ta osoba dostała już wcześniej link, przestanie on działać.';
+  if (byMail) return again ? `Wysłać mailem nowy link do ustawienia hasła dla: ${who}?${old}` : `Wysłać maila z zaproszeniem do: ${who}?`;
+  return again ? `Utworzyć nowy link do ustawienia hasła dla: ${who}? Mail nie zostanie wysłany.${old}` : '';
+}
+
 admin.get('/', requireAdmin, async (c) => {
   const db = c.env.DB;
   const { results: users } = await db.prepare('SELECT * FROM users ORDER BY active DESC, role, name, email').all<User>();
@@ -85,6 +125,12 @@ admin.get('/', requireAdmin, async (c) => {
   const aiToday = ai ? await aiUsageToday(c.env) : 0;
   const mailOn = mailConfigured(c.env);
   const sent24 = await mailsSentLast24h(c.env);
+  const pending = users.filter((u) => u.active && !u.invited_at && !u.password_hash);
+  const batch = pending.slice(0, INVITE_BATCH);
+  const bulkAsk =
+    `Wysłać teraz maile z zaproszeniem do ${batch.length} ${plural(batch.length, 'osoby', 'osób', 'osób')}?\n\n` +
+    batch.map((u) => `• ${u.name || u.email}`).join('\n') +
+    (pending.length > batch.length ? `\n\nPozostałe ${pending.length - batch.length} wyślesz kolejnym kliknięciem.` : '');
 
   return c.html(
     <Layout title="Panel admina" user={c.var.user} flash={takeFlash(c)} scripts={['/js/app.js', '/js/admin.js']} nav="admin">
@@ -207,14 +253,11 @@ admin.get('/', requireAdmin, async (c) => {
             <div class="row" style="margin-bottom:12px">
               <h2 style="margin:0">Członkowie ({users.filter((u) => u.active).length})</h2>
               <span class="spacer"></span>
-              {mailOn && users.some((u) => u.active && !u.invited_at && !u.password_hash) && (
-                <form
-                  method="post"
-                  action="/admin/czlonkowie/zaproszenia"
-                  data-confirm={`Wysłać zaproszenia do ${users.filter((u) => u.active && !u.invited_at && !u.password_hash).length} osób, które jeszcze ich nie dostały? (po 8 naraz)`}
-                >
+              {mailOn && pending.length > 0 && (
+                <form method="post" action="/admin/czlonkowie/zaproszenia" data-confirm={bulkAsk}>
+                  <input type="hidden" name="ids" value={batch.map((u) => u.id).join(',')} />
                   <button class="btn" type="submit">
-                    Wyślij zaproszenia niezaproszonym ({users.filter((u) => u.active && !u.invited_at && !u.password_hash).length})
+                    Wyślij zaproszenia niezaproszonym ({pending.length})
                   </button>
                 </form>
               )}
@@ -265,9 +308,32 @@ admin.get('/', requireAdmin, async (c) => {
                         <td class="actions-cell">
                           <div class="row" style="gap:6px">
                             {u.active ? (
-                              <button type="button" class="btn small" data-invite={u.id} data-email={u.email}>
-                                {u.invited_at || u.password_hash ? 'Nowy link do hasła' : 'Wyślij zaproszenie'}
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  class="btn ghost small"
+                                  data-invite-link={u.id}
+                                  data-email={u.email}
+                                  data-ask={inviteAsk(u, false, Boolean(u.invited_at || u.password_hash))}
+                                  data-ask-again={inviteAsk(u, false, true)}
+                                  data-label-again="Nowy link do skopiowania"
+                                >
+                                  {u.invited_at || u.password_hash ? 'Nowy link do skopiowania' : 'Link do skopiowania'}
+                                </button>
+                                {mailOn && (
+                                  <button
+                                    type="button"
+                                    class="btn small"
+                                    data-invite={u.id}
+                                    data-email={u.email}
+                                    data-ask={inviteAsk(u, true, Boolean(u.invited_at || u.password_hash))}
+                                    data-ask-again={inviteAsk(u, true, true)}
+                                    data-label-again="Nowy link mailem"
+                                  >
+                                    {u.invited_at || u.password_hash ? 'Nowy link mailem' : 'Wyślij zaproszenie'}
+                                  </button>
+                                )}
+                              </>
                             ) : null}
                             <form method="post" action={`/admin/czlonkowie/${u.id}`} class="inline-form">
                               <input type="hidden" name="action" value={u.active ? 'deactivate' : 'activate'} />
@@ -442,28 +508,46 @@ admin.post('/czlonkowie', requireAdmin, async (c) => {
   return c.redirect('/admin');
 });
 
-/** Zaproszenia dla aktywnych osób bez zaproszenia i bez hasła — po 8 naraz (ok. 5 podżądań na zaproszenie, limit 50) */
+/**
+ * Zaproszenia dla aktywnych osób bez zaproszenia i bez hasła — po 8 naraz (ok. 5 podżądań na zaproszenie, limit 50).
+ * Formularz przysyła identyfikatory osób wymienionych w pytaniu, więc wychodzi dokładnie to, co admin zatwierdził.
+ */
 admin.post('/czlonkowie/zaproszenia', requireAdmin, async (c) => {
   if (!mailConfigured(c.env)) {
     setFlash(c, 'err', 'Wysyłka maili jest wyłączona.');
     return c.redirect('/admin');
   }
+  const f = await c.req.parseBody();
+  const ids = [...new Set(String(f.ids ?? '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0))].slice(0, INVITE_BATCH);
+  if (!ids.length) {
+    setFlash(c, 'err', 'Nie wybrano nikogo do zaproszenia. Odśwież stronę i spróbuj ponownie.');
+    return c.redirect('/admin');
+  }
   const { results: todo } = await c.env.DB.prepare(
-    'SELECT * FROM users WHERE active = 1 AND invited_at IS NULL AND password_hash IS NULL ORDER BY name, email',
-  ).all<User>();
+    `SELECT * FROM users WHERE id IN (${ids.map(() => '?').join(',')}) AND active = 1 AND invited_at IS NULL AND password_hash IS NULL`,
+  )
+    .bind(...ids)
+    .all<User>();
   let sent = 0;
   const problems: string[] = [];
-  for (const u of todo.slice(0, INVITE_BATCH)) {
+  for (const u of todo) {
     const r = await sendInvite(c, u);
     if (r.sent) sent++;
     else problems.push(`${u.name || u.email}: ${r.error ?? 'nie wysłano'}`);
   }
-  const left = todo.length - sent;
+  const rest = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM users WHERE active = 1 AND invited_at IS NULL AND password_hash IS NULL').first<{ n: number }>();
+  const left = rest?.n ?? 0;
   const msg = [`Wysłano ${sent} ${plural(sent, 'zaproszenie', 'zaproszenia', 'zaproszeń')}`];
   if (left > 0) msg.push(`zostało ${left}, kliknij przycisk jeszcze raz`);
   if (problems.length) msg.push(`problemy: ${problems.slice(0, 3).join('; ')}`);
   setFlash(c, problems.length ? 'err' : 'ok', `${msg.join(', ')}.`);
   return c.redirect('/admin');
+});
+
+admin.post('/czlonkowie/:id/link', requireAdmin, async (c) => {
+  const u = await c.env.DB.prepare('SELECT * FROM users WHERE id = ? AND active = 1').bind(Number(c.req.param('id'))).first<User>();
+  if (!u) return c.json({ ok: false, error: 'Nie ma takiej osoby.' }, 404);
+  return c.json({ ok: true, link: await inviteLink(c, u) });
 });
 
 admin.post('/czlonkowie/:id/zaproszenie', requireAdmin, async (c) => {

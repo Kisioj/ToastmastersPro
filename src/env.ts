@@ -36,6 +36,8 @@ export interface User {
   invited_at: number | null;
   last_login_at: number | null;
   created_at: number;
+  /** admin w trybie „podgląd jako członek”: role jest wtedy 'member', a uprawnienia opiekuna wyłączone */
+  preview?: boolean;
 }
 
 export type Phase = 'draft' | 'submissions' | 'voting' | 'closed';

@@ -58,10 +58,16 @@ code, .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; 
 .nav a { padding: 8px 12px; border-radius: 999px; color: var(--ink); font-weight: 600; font-size: 1rem; text-decoration: none; white-space: nowrap; }
 .nav a:hover { background: var(--soft); color: var(--blue); }
 .nav a[aria-current="page"] { color: var(--maroon); }
+.nav form { display: contents; }
+.nav .navbtn { padding: 8px 12px; border: 0; border-radius: 999px; background: none; color: var(--ink); font: inherit; font-weight: 600; font-size: 1rem; white-space: nowrap; cursor: pointer; }
+.nav .navbtn:hover { background: var(--soft); color: var(--blue); }
+.preview-bar { background: var(--yellow); color: var(--blue-2); border-top: 1px solid #e3cd57; }
+.top .preview-bar .wrap { min-height: 0; flex-wrap: wrap; justify-content: space-between; }
+.preview-bar p { margin: 0; font-size: .95rem; flex: 1 1 320px; }
 @media (max-width: 640px) {
   .brand img { width: 140px; }
   .nav { width: 100%; margin: 0; }
-  .nav a { padding: 6px 10px; font-size: .95rem; }
+  .nav a, .nav .navbtn { padding: 6px 10px; font-size: .95rem; }
 }
 
 /* przyciski */

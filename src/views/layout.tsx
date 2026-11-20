@@ -8,7 +8,7 @@ import { METHODS } from '../lib/voting';
 import { PHASES } from '../lib/contests';
 
 /** Zmień przy zmianach w /public, żeby przeglądarki pobrały nowe pliki */
-export const ASSET_V = '9';
+export const ASSET_V = '10';
 
 interface LayoutProps {
   title: string;
@@ -51,12 +51,34 @@ export const Layout: FC<LayoutProps> = ({ title, user, flash, scripts = [], nav,
                   Panel admina
                 </a>
               )}
+              {user.role === 'admin' && (
+                <form method="post" action="/admin/podglad">
+                  <button type="submit" class="navbtn" title="Zobacz stronę tak, jak widzi ją zwykły członek klubu">
+                    Podgląd członka
+                  </button>
+                </form>
+              )}
               <a href="/konto" aria-current={nav === 'account' ? 'page' : undefined}>
                 Moje konto
               </a>
             </nav>
           )}
         </div>
+        {user?.preview && (
+          <div class="preview-bar" role="status">
+            <div class="wrap">
+              <p>
+                <strong>Podgląd jako członek.</strong> Widzisz stronę tak jak zwykły członek klubu, bez uprawnień admina i opiekuna. Głosy i
+                zgłoszenia zapisują się naprawdę na Twoim koncie.
+              </p>
+              <form method="post" action="/podglad/koniec">
+                <button type="submit" class="btn blue small">
+                  Wróć do widoku admina
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
       </header>
       <main id="tresc">
         {flash && (
