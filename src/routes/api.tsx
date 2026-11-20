@@ -96,7 +96,11 @@ api.post('/api/konkursy/:id/glos/usun', async (c) => {
   const body = await readJson<{ method?: string }>(c);
   if (!body || !isMethod(body.method)) return err(c, 'Nieprawidłowy sposób głosowania.');
   await c.env.DB.prepare('DELETE FROM ballots WHERE contest_id = ? AND user_id = ? AND method = ?').bind(contest.id, user.id, body.method).run();
-  return c.json({ ok: true });
+  // wyniki po wycofaniu głosu: admin i opiekun widzą je dalej, członek zależnie od ustawień konkursu
+  const results = canSeeResults(contest, user, false, contest.manager)
+    ? await computeTally(c.env.DB, contest, body.method, await listEntries(c.env.DB, contest.id))
+    : null;
+  return c.json({ ok: true, results });
 });
 
 // ——— zgłoszenia rollupu ———

@@ -8,7 +8,7 @@ import { METHODS } from '../lib/voting';
 import { PHASES } from '../lib/contests';
 
 /** Zmień przy zmianach w /public, żeby przeglądarki pobrały nowe pliki */
-export const ASSET_V = '11';
+export const ASSET_V = '12';
 
 interface LayoutProps {
   title: string;

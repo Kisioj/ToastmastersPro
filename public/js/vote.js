@@ -72,6 +72,45 @@ function markVoted(method) {
   const tab = document.getElementById(`tab-${method}`);
   if (tab && !tab.querySelector('.done-mark')) tab.append(h('span', { class: 'done-mark', 'aria-label': 'oddano głos', text: '✓' }));
 }
+function unmarkVoted(method) {
+  document.getElementById(`tab-${method}`)?.querySelector('.done-mark')?.remove();
+}
+/** Po wycofaniu głosu: wyniki nadal widoczne (np. admin) albo chowamy je */
+function updateResults(method, tally) {
+  if (tally) return showResults(method, tally);
+  delete D.results[method];
+  const box = document.querySelector(`[data-results="${method}"]`);
+  if (box) {
+    box.hidden = true;
+    box.replaceChildren();
+  }
+}
+
+/** „Wycofaj głos” (zapisany głos: usuwa go z serwera) albo „Wyczyść wybór” (tylko zaznaczenia na ekranie) */
+async function clearBallot(m, btn, status) {
+  const root = document.querySelector(`[data-ballot="${m}"]`);
+  let msg = 'Wyczyszczono wybór.';
+  if (D.ballots[m]) {
+    const name = D.methods.length > 1 ? D.methods.find((x) => x.id === m)?.name : null;
+    if (!confirm(`Wycofać Twój głos${name ? ` w sposobie „${name}”` : ''}? Możesz potem zagłosować od nowa.`)) return;
+    btn.setAttribute('aria-disabled', 'true');
+    btn.classList.add('busy');
+    try {
+      const res = await post(`/api/konkursy/${D.contestId}/glos/usun`, { method: m });
+      delete D.ballots[m];
+      unmarkVoted(m);
+      updateResults(m, res.results);
+      msg = 'Głos wycofany. Możesz zagłosować od nowa.';
+    } catch (err) {
+      btn.removeAttribute('aria-disabled');
+      btn.classList.remove('busy');
+      return setStatus(status, false, err.message);
+    }
+  }
+  RENDER[m](root, m);
+  const fresh = root.querySelector('.status-line');
+  if (fresh) setStatus(fresh, true, msg);
+}
 
 async function saveBallot(method, data, btn, status) {
   btn.setAttribute('aria-disabled', 'true');
@@ -83,6 +122,8 @@ async function saveBallot(method, data, btn, status) {
     setStatus(status, true, res.results ? 'Głos zapisany ✓ Wyniki poniżej.' : 'Głos zapisany ✓ Wyniki poznamy po zakończeniu głosowania.');
     if (res.results) showResults(method, res.results);
     btn.textContent = 'Zmień głos';
+    const clear = btn.parentElement?.querySelector('[data-clear]');
+    if (clear) clear.textContent = 'Wycofaj głos';
   } catch (err) {
     setStatus(status, false, err.message);
   } finally {
@@ -91,14 +132,19 @@ async function saveBallot(method, data, btn, status) {
   }
 }
 
-function saveButton(label, onSave) {
+function saveButton(m, label, onSave) {
   const status = statusLine();
   const btn = h('button', { type: 'button', class: 'btn', text: label });
   btn.addEventListener('click', () => {
     if (btn.getAttribute('aria-disabled') === 'true') return;
     onSave(btn, status);
   });
-  return { btn, status, row: h('div', { class: 'actions' }, btn, status) };
+  const clear = h('button', { type: 'button', class: 'btn ghost', 'data-clear': true, text: D.ballots[m] ? 'Wycofaj głos' : 'Wyczyść wybór' });
+  clear.addEventListener('click', () => {
+    if (clear.getAttribute('aria-disabled') === 'true') return;
+    clearBallot(m, clear, status);
+  });
+  return { btn, status, row: h('div', { class: 'actions' }, btn, clear, status) };
 }
 
 // — 1. Jeden głos —
@@ -123,7 +169,7 @@ function renderSingle(root, m) {
     ),
   );
   const fs = h('fieldset', { style: 'border:0;margin:0;padding:0' }, h('legend', { class: 'visually-hidden', text: 'Wybierz jedną propozycję' }), list);
-  const { row, status } = saveButton(D.ballots[m] ? 'Zmień głos' : 'Zapisz głos', (btn) => {
+  const { row, status } = saveButton(m, D.ballots[m] ? 'Zmień głos' : 'Zapisz głos', (btn) => {
     if (choice === null) return setStatus(status, false, 'Wybierz jedną propozycję.');
     saveBallot(m, { choice }, btn, status);
   });
@@ -176,7 +222,7 @@ function renderTop3(root, m) {
       return h('li', { class: 'opt' }, thumb(e), h('span', { class: 'txt', text: e.title }), h('span', { class: 'place-btns' }, btns));
     }),
   );
-  const { row, status } = saveButton(D.ballots[m] ? 'Zmień głos' : 'Zapisz głos', (btn) => {
+  const { row, status } = saveButton(m, D.ballots[m] ? 'Zmień głos' : 'Zapisz głos', (btn) => {
     if (podium.slice(0, need).some((x) => x === null)) return setStatus(status, false, `Uzupełnij wszystkie ${need} miejsca na podium.`);
     saveBallot(m, { podium: podium.slice(0, need) }, btn, status);
   });
@@ -215,7 +261,7 @@ function renderApproval(root, m) {
     ),
   );
   const fs = h('fieldset', { style: 'border:0;margin:0;padding:0' }, h('legend', { class: 'visually-hidden', text: 'Zaznacz propozycje, które Ci odpowiadają' }), list);
-  const { row, status } = saveButton(D.ballots[m] ? 'Zmień głos' : 'Zapisz głos', (btn) => {
+  const { row, status } = saveButton(m, D.ballots[m] ? 'Zmień głos' : 'Zapisz głos', (btn) => {
     if (!chosen.size) return setStatus(status, false, 'Zaznacz przynajmniej jedną propozycję.');
     saveBallot(m, { approved: [...chosen] }, btn, status);
   });
@@ -328,7 +374,7 @@ function renderRanking(root, m) {
     text: 'Dodaj pozostałe na koniec',
     onclick: () => [...poolNodes.keys()].forEach((id) => rank(id)),
   });
-  const { row, status } = saveButton(D.ballots[m] ? 'Zmień głos' : 'Zapisz ranking', (btn) => {
+  const { row, status } = saveButton(m, D.ballots[m] ? 'Zmień głos' : 'Zapisz ranking', (btn) => {
     if (order.length !== D.entries.length) return setStatus(status, false, `Uszereguj wszystkie propozycje (brakuje ${D.entries.length - order.length}).`);
     saveBallot(m, { order: [...order] }, btn, status);
   });
@@ -377,7 +423,7 @@ function renderScore(root, m) {
     }
     return h('fieldset', { class: 'stars-row' }, h('legend', { text: e.title }), thumb(e), stars, val);
   });
-  const { row, status } = saveButton(D.ballots[m] ? 'Zmień oceny' : 'Zapisz oceny', (btn) => {
+  const { row, status } = saveButton(m, D.ballots[m] ? 'Zmień oceny' : 'Zapisz oceny', (btn) => {
     const missing = D.entries.filter((e) => !scores[e.id]).length;
     if (missing) return setStatus(status, false, `Oceń wszystkie propozycje (brakuje ${missing}).`);
     saveBallot(m, { scores }, btn, status);
@@ -416,7 +462,7 @@ function renderPoints(root, m) {
       return h('li', { class: 'opt' }, thumb(e), h('span', { class: 'txt', text: e.title }), h('span', { class: 'stepper' }, minus, out, plus));
     }),
   );
-  const { row, status } = saveButton(D.ballots[m] ? 'Zmień głos' : 'Zapisz punkty', (btn) => {
+  const { row, status } = saveButton(m, D.ballots[m] ? 'Zmień głos' : 'Zapisz punkty', (btn) => {
     const l = left();
     if (l !== 0) return setStatus(status, false, `Rozdaj dokładnie ${budget} pkt (zostało ${l}).`);
     saveBallot(m, { points: Object.fromEntries(Object.entries(pts).filter(([, v]) => v > 0)) }, btn, status);
@@ -445,10 +491,12 @@ function renderDuel(root, m) {
     onclick: async () => {
       if (!confirm('Usunąć Twoje dotychczasowe pojedynki i zacząć od nowa?')) return;
       try {
-        await post(`/api/konkursy/${D.contestId}/glos/usun`, { method: m });
+        const res = await post(`/api/konkursy/${D.contestId}/glos/usun`, { method: m });
         done = new Set();
         skipped.clear();
         delete D.ballots[m];
+        unmarkVoted(m);
+        updateResults(m, res.results);
         next();
       } catch (err) {
         setStatus(status, false, err.message);
