@@ -85,6 +85,20 @@ member.get('/konkursy/:slug', async (c) => {
         ).results
       : [];
 
+  // admin widzi wszystkie zgłoszenia z autorami; członkowie tylko swoje (w głosowaniu — bez nazwisk)
+  const allSubs =
+    isRollup && user.role === 'admin'
+      ? (
+          await db
+            .prepare(
+              `SELECT e.*, COALESCE(NULLIF(u.name, ''), u.email, '—') AS author FROM entries e LEFT JOIN users u ON u.id = e.author_id
+               WHERE e.contest_id = ? AND e.upload_complete = 1 ORDER BY e.created_at DESC`,
+            )
+            .bind(contest.id)
+            .all<EntryRow & { author: string }>()
+        ).results
+      : [];
+
   const scripts = ['/js/app.js'];
   if (showVoting || contest.phase === 'closed') scripts.push('/js/vote.js');
   if (isRollup && contest.phase === 'submissions') scripts.push('/js/rollup.js');
@@ -104,6 +118,29 @@ member.get('/konkursy/:slug', async (c) => {
       </PageHead>
 
       {isRollup && contest.phase === 'submissions' && <RollupSubmit contest={contest} user={user} mySubs={mySubs} aiOn={aiProvider(c.env) !== null} storeOn={getStore(c.env) !== null} />}
+
+      {user.role === 'admin' && isRollup && (
+        <section class="section tight">
+          <div class="wrap mid">
+            <h2>
+              Wszystkie zgłoszenia ({allSubs.length}) <span class="pill">widok admina</span>
+            </h2>
+            <p class="muted">Członkowie widzą tylko własne projekty, a w głosowaniu — same projekty, bez nazwisk autorów.</p>
+            {allSubs.length === 0 ? (
+              <p class="empty-note">Nikt jeszcze nie wysłał projektu.</p>
+            ) : (
+              <div class="stack" style="--gap:16px">
+                {allSubs
+                  // własne projekty admina są już wyżej („Twoje zgłoszenia”) — bez duplikatów id w DOM
+                  .filter((e) => !(contest.phase === 'submissions' && e.author_id === user.id))
+                  .map((e) => (
+                    <SubmissionCard entry={e} aiOn={aiProvider(c.env) !== null} canDelete={true} author={e.author} />
+                  ))}
+              </div>
+            )}
+          </div>
+        </section>
+      )}
 
       {!isRollup && contest.phase === 'submissions' && (
         <section class="section tight">
