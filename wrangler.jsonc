@@ -30,6 +30,8 @@
     "SMTP_PORT": "465",
     "SMTP_USER": "toastmastersczwa@gmail.com",
     "MAIL_FROM_NAME": "Toastmasters Częstochowa",
+    // Gmail: ok. 500 maili/dobę na konto — zostawiamy zapas na ręczną korespondencję klubu
+    "MAIL_DAILY_LIMIT": "300",
     // "workers-ai" (darmowe) albo "claude" (wymaga sekretu ANTHROPIC_API_KEY)
     "AI_PROVIDER": "workers-ai",
     "WORKERS_AI_MODEL": "@cf/meta/llama-4-scout-17b-16e-instruct",

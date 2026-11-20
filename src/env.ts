@@ -13,6 +13,7 @@ export interface Env {
   SMTP_USER?: string;
   SMTP_PASS?: string;
   MAIL_FROM_NAME?: string;
+  MAIL_DAILY_LIMIT?: string;
 
   AI_PROVIDER?: string;
   WORKERS_AI_MODEL?: string;

@@ -4,19 +4,59 @@ import { now } from './util';
 
 export interface MailResult {
   sent: boolean;
-  /** smtp = wysłano; off = brak konfiguracji SMTP (tryb deweloperski) */
-  mode: 'smtp' | 'off';
+  /** smtp = wysłano (lub błąd SMTP); off = brak konfiguracji SMTP; blocked = zablokowane przez limity */
+  mode: 'smtp' | 'off' | 'blocked';
   error?: string;
+  /** dla mode=blocked: za ile sekund można spróbować ponownie */
+  retryIn?: number;
 }
 
 export function mailConfigured(env: Env): boolean {
   return Boolean(env.SMTP_USER && env.SMTP_PASS);
 }
 
+/**
+ * Limity wysyłki (Gmail pozwala zwykłemu kontu na ok. 500 maili/dobę — po przekroczeniu blokuje całe konto
+ * nawet na 24 h, także ręczną korespondencję klubu):
+ *  - maile tylko do aktywnych osób z listy członków,
+ *  - maks. 1 mail na MAIL_COOLDOWN sekund na adres,
+ *  - maks. MAIL_DAILY_LIMIT maili na dobę z całej aplikacji (domyślnie 300 — zapas na ręczne maile klubu).
+ */
+export const MAIL_COOLDOWN = 5 * 60;
+
+export function mailDailyLimit(env: Env): number {
+  return Number(env.MAIL_DAILY_LIMIT || 300);
+}
+
+export async function mailsSentLast24h(env: Env): Promise<number> {
+  const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM mail_log WHERE status = 'sent' AND created_at > ?").bind(now() - 86400).first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+export async function mailAllowed(env: Env, to: string): Promise<{ ok: true } | { ok: false; reason: string; retryIn?: number }> {
+  const email = to.trim().toLowerCase();
+  const t = now();
+  const [member, last] = await env.DB.batch<{ v: number | null }>([
+    env.DB.prepare('SELECT 1 AS v FROM users WHERE email = ? AND active = 1'),
+    env.DB.prepare("SELECT MAX(created_at) AS v FROM mail_log WHERE to_email = ? AND status IN ('sent', 'error')"),
+  ].map((s) => s.bind(email)));
+  if (!member.results.length) return { ok: false, reason: 'Ten adres nie jest na liście aktywnych członków.' };
+  const lastAt = last.results[0]?.v ?? 0;
+  if (lastAt && t - lastAt < MAIL_COOLDOWN) {
+    const retryIn = MAIL_COOLDOWN - (t - lastAt);
+    return { ok: false, reason: `Na ten adres wysłaliśmy maila przed chwilą — kolejny możliwy za ${Math.ceil(retryIn / 60)} min.`, retryIn };
+  }
+  if ((await mailsSentLast24h(env)) >= mailDailyLimit(env))
+    return { ok: false, reason: `Osiągnięto dzienny limit ${mailDailyLimit(env)} maili — spróbuj jutro.` };
+  return { ok: true };
+}
+
 export async function sendMail(
   env: Env,
   msg: { to: string; toName?: string; subject: string; text: string; html: string },
 ): Promise<MailResult> {
+  const allowed = await mailAllowed(env, msg.to);
+  if (!allowed.ok) return { sent: false, mode: 'blocked', error: allowed.reason, retryIn: allowed.retryIn };
   let result: MailResult;
   if (!mailConfigured(env)) {
     console.log(`[MAIL wyłączony] Do: ${msg.to}\nTemat: ${msg.subject}\n\n${msg.text}`);

@@ -49,3 +49,20 @@ document.addEventListener('click', async (e) => {
     btn.classList.remove('busy');
   }
 });
+
+// Wczytanie listy członków z pliku CSV/TXT do pola tekstowego.
+// Excel zapisuje CSV często w Windows-1250 — jeśli plik nie jest poprawnym UTF-8, dekodujemy jako cp1250.
+document.addEventListener('change', async (e) => {
+  const input = e.target.closest('input[type=file][data-fill]');
+  if (!input?.files?.[0]) return;
+  const buf = await input.files[0].arrayBuffer();
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    text = new TextDecoder('windows-1250').decode(buf);
+  }
+  const target = document.getElementById(input.dataset.fill);
+  target.value = text.replace(/^\uFEFF/, '');
+  target.focus();
+});

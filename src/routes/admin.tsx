@@ -5,9 +5,10 @@ import { aiProvider } from '../lib/ai';
 import { createToken, linkFor } from '../lib/auth';
 import { computeTallies, getContest, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS } from '../lib/contests';
 import { setFlash, takeFlash } from '../lib/flash';
-import { inviteMail, mailConfigured, sendMail } from '../lib/mail';
+import { inviteMail, mailAllowed, mailConfigured, mailDailyLimit, mailsSentLast24h, sendMail } from '../lib/mail';
+import { parseMemberLines } from '../lib/members';
 import { deleteParts, getStore } from '../lib/storage';
-import { EMAIL_RE, fmtDate, normEmail, now, slugify } from '../lib/util';
+import { fmtDate, now, slugify } from '../lib/util';
 import { isMethod, METHOD_IDS, METHODS, plural, type MethodId } from '../lib/voting';
 import { Layout, PageHead, PhasePill, ResultsList } from '../views/layout';
 import { SubmissionCard } from './member';
@@ -27,26 +28,10 @@ function memberStatus(u: User): { cls: string; text: string } {
   return { cls: 'draft', text: 'Bez zaproszenia' };
 }
 
-/** "Jan Kowalski <jan@x.pl>", "jan@x.pl, Jan Kowalski", "jan@x.pl" */
-export function parseMemberLines(text: string): { email: string; name: string }[] {
-  const out = new Map<string, string>();
-  for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/[^\s<>(),;:"']+@[^\s<>(),;:"']+\.[a-z]{2,}/i);
-    if (!m) continue;
-    const email = normEmail(m[0]);
-    if (!EMAIL_RE.test(email)) continue;
-    const name = line
-      .replace(m[0], '')
-      .replace(/[<>(),;"\t]/g, ' ')
-      .replace(/\s+/g, ' ')
-      .trim()
-      .slice(0, 80);
-    if (!out.has(email) || name) out.set(email, name);
-  }
-  return [...out].map(([email, name]) => ({ email, name }));
-}
-
 async function sendInvite(c: Context<AppEnv>, u: User) {
+  // limit sprawdzamy przed utworzeniem tokenu — nowy link unieważnia poprzedni, wysłany mailem
+  const allowed = await mailAllowed(c.env, u.email);
+  if (!allowed.ok) return { link: null, sent: false, mode: 'blocked' as const, error: allowed.reason };
   const token = await createToken(c.env.DB, u.id, 'set_password');
   const link = linkFor(c, 'set_password', token);
   const res = await sendMail(c.env, { to: u.email, toName: u.name, ...inviteMail(u.name.split(' ')[0] ?? '', link) });
@@ -64,6 +49,7 @@ admin.get('/', async (c) => {
   const store = getStore(c.env);
   const ai = aiProvider(c.env);
   const mailOn = mailConfigured(c.env);
+  const sent24 = await mailsSentLast24h(c.env);
 
   return c.html(
     <Layout title="Panel admina" user={c.var.user} flash={takeFlash(c)} scripts={['/js/app.js', '/js/admin.js']} nav="admin">
@@ -83,6 +69,10 @@ admin.get('/', async (c) => {
                   do skopiowania.
                 </p>
               )}
+              <p class="muted small">
+                Wysłane w ostatnich 24 h: <strong>{sent24}</strong> z limitu {mailDailyLimit(c.env)} (Gmail pozwala na ok. 500/dobę na całe konto). Maile idą
+                tylko do aktywnych osób z listy, maks. 1 na 5 minut na adres.
+              </p>
               {lastErr && (
                 <p class="flash err small">
                   Ostatni błąd ({fmtDate(lastErr.created_at)}, {lastErr.to_email}): {lastErr.error}
@@ -175,18 +165,21 @@ admin.get('/', async (c) => {
 
           <div>
             <h2>Członkowie ({users.filter((u) => u.active).length})</h2>
-            <form class="form card" method="post" action="/admin/czlonkowie" style="margin-bottom:20px">
+            <form class="form card" method="post" action="/admin/czlonkowie/podglad" style="margin-bottom:20px">
               <label for="members">
-                Dodaj osoby — jedna w linii
-                <span class="hint">Np. „Anna Nowak &lt;anna@example.com&gt;”, „anna@example.com, Anna Nowak” albo sam adres.</span>
-                <textarea id="members" name="members" rows={4} required spellcheck={false}></textarea>
+                Dodaj osoby albo wklej całą listę członków
+                <span class="hint">
+                  Jedna osoba w linii: „Anna Nowak &lt;anna@example.com&gt;”, „anna@example.com, Anna Nowak” albo sam adres. Możesz też wkleić wiersze
+                  skopiowane z Excela / Arkuszy Google lub wczytać plik CSV — wyłapiemy adresy i imiona. Przed zapisem pokażemy podgląd.
+                </span>
+                <textarea id="members" name="members" rows={5} required spellcheck={false}></textarea>
               </label>
-              <label class="check">
-                <input type="checkbox" name="invite" value="1" checked={mailOn} />
-                <span>Od razu wyślij zaproszenia z linkiem do ustawienia hasła {mailOn ? '' : '(maile wyłączone — linki skopiujesz z tabeli)'}</span>
+              <label for="members-file" class="hint" style="font-weight:600">
+                albo wczytaj plik CSV / TXT
+                <input type="file" id="members-file" accept=".csv,.tsv,.txt,text/csv,text/plain" data-fill="members" />
               </label>
               <button class="btn" type="submit" style="justify-self:start">
-                Dodaj
+                Pokaż podgląd
               </button>
             </form>
             <div class="table-wrapper" tabindex={0} role="region" aria-labelledby="mem-cap">
@@ -256,6 +249,88 @@ admin.get('/', async (c) => {
   );
 });
 
+/** Podgląd importu: kto zostanie dodany, kto już jest, kogo nie ma na liście */
+admin.post('/czlonkowie/podglad', async (c) => {
+  const f = await c.req.parseBody();
+  const people = parseMemberLines(String(f.members ?? ''));
+  if (!people.length) {
+    setFlash(c, 'err', 'Nie znalazłem w tekście żadnego poprawnego adresu e-mail.');
+    return c.redirect('/admin');
+  }
+  const { results: users } = await c.env.DB.prepare('SELECT * FROM users').all<User>();
+  const byEmail = new Map(users.map((u) => [u.email, u]));
+  const listed = new Set(people.map((p) => p.email));
+  const rows = people.map((p) => {
+    const u = byEmail.get(p.email);
+    const status = !u ? 'Nowa osoba' : !u.active ? 'Zostanie aktywowana' : p.name && p.name !== u.name ? `Już jest (imię: ${u.name || '—'} → ${p.name})` : 'Już jest';
+    return { ...p, status, cls: !u ? 'ok' : !u.active ? 'warn' : '' };
+  });
+  const missing = users.filter((u) => u.active && u.role !== 'admin' && !listed.has(u.email));
+  const newCount = rows.filter((r) => r.cls === 'ok').length;
+  const mailOn = mailConfigured(c.env);
+  const normalized = people.map((p) => (p.name ? `${p.name} <${p.email}>` : p.email)).join('\n');
+
+  return c.html(
+    <Layout title="Podgląd importu" user={c.var.user} nav="admin" scripts={['/js/app.js']}>
+      <PageHead eyebrow="Panel admina · członkowie" title="Podgląd importu" lead={`Znaleziono ${people.length} ${plural(people.length, 'adres', 'adresy', 'adresów')}, w tym ${newCount} ${plural(newCount, 'nową osobę', 'nowe osoby', 'nowych osób')}. Sprawdź imiona — popraw je później w tabeli albo wklej listę jeszcze raz.`} />
+      <section class="section tight">
+        <div class="wrap stack" style="--gap:24px">
+          <div class="table-wrapper" tabindex={0} role="region" aria-labelledby="imp-cap">
+            <table class="data">
+              <caption id="imp-cap">Osoby z wklejonej listy</caption>
+              <thead>
+                <tr>
+                  <th>Imię i nazwisko</th>
+                  <th>E-mail</th>
+                  <th>Co się stanie</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr>
+                    <th>{r.name || <span class="muted">— brak imienia —</span>}</th>
+                    <td data-label="E-mail">{r.email}</td>
+                    <td data-label="Co się stanie">{r.cls ? <span class={`pill ${r.cls}`}>{r.status}</span> : <span class="muted">{r.status}</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <form class="form card" method="post" action="/admin/czlonkowie">
+            <textarea name="members" hidden readonly>
+              {normalized}
+            </textarea>
+            <label class="check">
+              <input type="checkbox" name="invite" value="1" checked={mailOn} disabled={!mailOn} />
+              <span>
+                Wyślij nowym osobom zaproszenie z linkiem do ustawienia hasła
+                {mailOn ? ' (maks. 15 naraz — resztę wyślesz przyciskami w tabeli)' : ' — maile są wyłączone, linki skopiujesz z tabeli'}
+              </span>
+            </label>
+            {missing.length > 0 && (
+              <label class="check">
+                <input type="checkbox" name="sync" value="1" />
+                <span>
+                  <strong>Tylko te osoby mają mieć dostęp</strong> — dezaktywuj {missing.length} {plural(missing.length, 'osobę', 'osoby', 'osób')} spoza tej listy:{' '}
+                  {missing.map((u) => u.name || u.email).join(', ')}. Admini nie są ruszani, a dezaktywowane konta można przywrócić.
+                </span>
+              </label>
+            )}
+            <div class="row">
+              <button class="btn" type="submit">
+                Zapisz {people.length} {plural(people.length, 'osobę', 'osoby', 'osób')}
+              </button>
+              <a class="btn ghost" href="/admin">
+                Anuluj
+              </a>
+            </div>
+          </form>
+        </div>
+      </section>
+    </Layout>,
+  );
+});
+
 admin.post('/czlonkowie', async (c) => {
   const f = await c.req.parseBody();
   const people = parseMemberLines(String(f.members ?? ''));
@@ -280,18 +355,34 @@ admin.post('/czlonkowie', async (c) => {
       fresh.push(row);
     }
   }
+  // „tylko te maile”: dezaktywuj osoby spoza listy (bez adminów)
+  let deactivated = 0;
+  if (f.sync) {
+    const listed = new Set(people.map((p) => p.email));
+    const { results: active } = await db.prepare("SELECT id, email FROM users WHERE active = 1 AND role != 'admin'").all<{ id: number; email: string }>();
+    const gone = active.filter((u) => !listed.has(u.email));
+    if (gone.length) {
+      await db.batch(gone.flatMap((u) => [db.prepare('UPDATE users SET active = 0 WHERE id = ?').bind(u.id), db.prepare('DELETE FROM sessions WHERE user_id = ?').bind(u.id)]));
+    }
+    deactivated = gone.length;
+  }
   let sent = 0;
   let failed = 0;
+  let blocked = 0;
   if (f.invite && mailConfigured(c.env)) {
     // limit podżądań na darmowym planie — wysyłamy max 15 naraz
     for (const u of fresh.slice(0, 15)) {
       const r = await sendInvite(c, u);
-      r.sent ? sent++ : failed++;
+      if (r.sent) sent++;
+      else if (r.mode === 'blocked') blocked++;
+      else failed++;
     }
   }
   const parts = [`Dodano ${added} ${plural(added, 'osobę', 'osoby', 'osób')}`];
   if (people.length > added) parts.push(`${people.length - added} już było na liście`);
+  if (deactivated) parts.push(`dezaktywowano ${deactivated} spoza listy`);
   if (sent) parts.push(`wysłano ${sent} ${plural(sent, 'zaproszenie', 'zaproszenia', 'zaproszeń')}`);
+  if (blocked) parts.push(`${blocked} zaproszeń wstrzymał limit wysyłki`);
   if (failed) parts.push(`${failed} maili nie wyszło — sprawdź ustawienia SMTP`);
   if (fresh.length > 15 && f.invite) parts.push('resztę zaproszeń wyślij przyciskami w tabeli');
   setFlash(c, failed ? 'err' : 'ok', `${parts.join(', ')}.`);
@@ -302,6 +393,7 @@ admin.post('/czlonkowie/:id/zaproszenie', async (c) => {
   const u = await c.env.DB.prepare('SELECT * FROM users WHERE id = ? AND active = 1').bind(Number(c.req.param('id'))).first<User>();
   if (!u) return c.json({ ok: false, error: 'Nie ma takiej osoby.' }, 404);
   const r = await sendInvite(c, u);
+  if (!r.link) return c.json({ ok: false, error: r.error }, 429);
   return c.json({ ok: true, link: r.link, sent: r.sent, mode: r.mode, error: r.error ?? null });
 });
 

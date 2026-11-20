@@ -3,7 +3,7 @@ import type { Context } from 'hono';
 import type { AppEnv, User } from '../env';
 import { consumeToken, createSession, createToken, destroySession, linkFor, peekToken, safeNext } from '../lib/auth';
 import { setFlash, takeFlash } from '../lib/flash';
-import { loginMail, sendMail } from '../lib/mail';
+import { loginMail, mailAllowed, sendMail } from '../lib/mail';
 import { hashPassword, MIN_PASSWORD, passwordProblem, verifyPassword } from '../lib/password';
 import { EMAIL_RE, normEmail, now } from '../lib/util';
 import { Layout, PageHead, PasswordInput } from '../views/layout';
@@ -95,18 +95,13 @@ auth.post('/logowanie/link', async (c) => {
   const user = await db.prepare('SELECT * FROM users WHERE email = ? AND active = 1').bind(email).first<User>();
   let devLink: string | null = null;
   let mailOff = false;
-  if (user) {
-    const recent = await db
-      .prepare("SELECT COUNT(*) AS n FROM tokens WHERE user_id = ? AND purpose = 'login' AND created_at > ?")
-      .bind(user.id, now() - 10 * 60)
-      .first<{ n: number }>();
-    if ((recent?.n ?? 0) < 3) {
-      const token = await createToken(db, user.id, 'login');
-      const link = linkFor(c, 'login', token);
-      const res = await sendMail(c.env, { to: user.email, toName: user.name, ...loginMail(link) });
-      mailOff = res.mode === 'off';
-      if (mailOff && isLocal(c)) devLink = link;
-    }
+  // maile tylko do osób z listy i maks. 1 na 5 minut na adres (limity Gmaila) — sprawdzamy przed utworzeniem tokenu
+  if (user && (await mailAllowed(c.env, user.email)).ok) {
+    const token = await createToken(db, user.id, 'login');
+    const link = linkFor(c, 'login', token);
+    const res = await sendMail(c.env, { to: user.email, toName: user.name, ...loginMail(link) });
+    mailOff = res.mode === 'off';
+    if (mailOff && isLocal(c)) devLink = link;
   }
   return c.html(
     <Layout title="Sprawdź skrzynkę" user={null}>
@@ -116,7 +111,9 @@ auth.post('/logowanie/link', async (c) => {
           <p>
             Jeśli <strong>{email}</strong> jest na liście członków, wysłaliśmy tam link do logowania. Link jest ważny 20 minut i działa jeden raz.
           </p>
-          <p class="muted">Nie widzisz maila? Zajrzyj do folderu „Spam” lub „Oferty”.</p>
+          <p class="muted">
+            Nie widzisz maila? Zajrzyj do folderu „Spam” lub „Oferty”. Kolejny link możemy wysłać najwcześniej 5 minut po poprzednim.
+          </p>
           {mailOff && !devLink && (
             <p class="callout">Wysyłka maili nie jest jeszcze skonfigurowana — poproś admina o link do logowania.</p>
           )}

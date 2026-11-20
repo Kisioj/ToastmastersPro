@@ -67,7 +67,19 @@ node scripts/admin-link.mjs twoj@mail.pl --admin --remote --url https://<twoj-ad
 3. `npx wrangler secret put SMTP_PASS` i wklej hasło.
 4. W panelu admina kliknij „Wyślij testowego maila do mnie”.
 
-Gmail pozwala wysłać ok. 500 maili dziennie, czyli z dużym zapasem jak na klub.
+Limity wysyłki (Gmail pozwala zwykłemu kontu na ok. 500 maili/dobę i po przekroczeniu blokuje całe konto
+nawet na 24 h, także ręczną korespondencję klubu):
+
+- maile idą wyłącznie do aktywnych osób z listy członków,
+- maks. 1 mail na 5 minut na adres (link do logowania lub zaproszenie),
+- maks. `MAIL_DAILY_LIMIT` maili na dobę z całej aplikacji (domyślnie 300),
+- zaproszenia hurtowe po 15 naraz (limit połączeń na darmowym planie Workers).
+
+### Import listy członków
+
+Panel admina → „Dodaj osoby albo wklej całą listę członków”: wklej wiersze z Excela/Arkuszy, linie
+„Imię Nazwisko <mail>” albo wczytaj CSV (UTF-8 lub Windows-1250). Przed zapisem pokazuje się podgląd,
+a opcja „Tylko te osoby mają mieć dostęp” dezaktywuje członków spoza listy (adminów nie rusza).
 
 ### Ocena AI — co wybrać
 
