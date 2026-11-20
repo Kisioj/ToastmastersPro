@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AppEnv, Contest, EntryRow, User } from '../env';
-import { reviewDesign, takeAiQuota } from '../lib/ai';
+import { aiLimitCheck, recordAiUse, reviewDesign } from '../lib/ai';
 import { canManage, canSeeResults, computeTally, getContest, listEntries, ROLLUP_DEFAULTS } from '../lib/contests';
 import { setFlash } from '../lib/flash';
 import { CHUNK_SIZE, concatParts, deleteParts, getStore } from '../lib/storage';
@@ -200,14 +200,19 @@ api.post('/api/zgloszenia/:id/zakoncz', async (c) => {
 
 async function runAi(c: Context<AppEnv>, imageB64: string, title: string, report: unknown, unlimited = false) {
   const user = c.var.user!;
-  if (!(await takeAiQuota(c.env, user.id, unlimited || user.role === 'admin')))
-    return { error: `Wykorzystano dzienny limit ocen AI (${c.env.AI_DAILY_LIMIT || 15}). Spróbuj jutro.` };
+  const limited = !unlimited && user.role !== 'admin';
+  if (limited) {
+    const blocked = await aiLimitCheck(c.env, user.id);
+    if (blocked) return { error: blocked, status: 429 as const };
+  }
   try {
     const review = await reviewDesign(c.env, { imageB64, title, report });
+    // liczymy tylko udane oceny
+    if (limited) await recordAiUse(c.env, user.id);
     return { review };
   } catch (e) {
     console.error('AI', e);
-    return { error: e instanceof Error ? e.message : 'Ocena AI nie powiodła się.' };
+    return { error: e instanceof Error ? e.message : 'Ocena AI nie powiodła się.', status: 502 as const };
   }
 }
 
@@ -220,12 +225,12 @@ api.post('/api/zgloszenia/:id/ocena-ai', async (c) => {
   const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
   const out = await runAi(c, b64(bytes), e.title, safeJson(e.report, {}), e.manager);
   if ('error' in out) {
-    // zapamiętaj powód przy zgłoszeniu, chyba że jest już udana ocena
+    // zapamiętaj powód przy zgłoszeniu (bez błędów limitu osoby), chyba że jest już udana ocena
     const prev = safeJson<{ error?: string } | null>(e.ai_report, null);
-    if (!prev || prev.error) {
+    if (out.status !== 429 && (!prev || prev.error)) {
       await c.env.DB.prepare('UPDATE entries SET ai_report = ? WHERE id = ?').bind(JSON.stringify({ error: out.error, created_at: now() }), e.id).run();
     }
-    return err(c, out.error!, 502);
+    return err(c, out.error!, out.status);
   }
   await c.env.DB.prepare('UPDATE entries SET ai_report = ? WHERE id = ?').bind(JSON.stringify(out.review), e.id).run();
   const html = await (<AiReviewView review={out.review!} />).toString();
@@ -238,7 +243,7 @@ api.post('/api/ocena-ai', async (c) => {
   if (!body?.image || typeof body.image !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(body.image.slice(0, 200)))
     return err(c, 'Brak obrazu do oceny.');
   const out = await runAi(c, body.image, String(body.title ?? 'projekt').slice(0, 120), body.report ?? {});
-  if ('error' in out) return err(c, out.error!, 502);
+  if ('error' in out) return err(c, out.error!, out.status);
   const html = await (<AiReviewView review={out.review!} />).toString();
   return c.json({ ok: true, review: out.review, html });
 });

@@ -139,7 +139,7 @@ admin.get('/', requireAdmin, async (c) => {
                 <p class="flash err small">Dzisiejszy darmowy limit Workers AI jest wyczerpany. Oceny wrócą o 1:00 w nocy (latem o 2:00).</p>
               )}
               <p class="muted small">
-                Darmowa pula Cloudflare: ok. 65-70 ocen dziennie. Limit aplikacji: {c.env.AI_DAILY_LIMIT || 15} ocen dziennie na osobę (admin bez limitu).
+                Darmowa pula Cloudflare: ok. 65-70 ocen dziennie. Limit aplikacji: {c.env.AI_DAILY_LIMIT || 8} ocen dziennie na osobę i {c.env.AI_COOLDOWN_MINUTES || 5} min przerwy między ocenami (admin i opiekun konkursu bez limitu).
               </p>
             </div>
             <div class="card">

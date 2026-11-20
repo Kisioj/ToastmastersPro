@@ -104,7 +104,7 @@ a opcja „Tylko te osoby mają mieć dostęp” dezaktywuje członków spoza li
   5–10 groszy amerykańskich za ocenę, a `CLAUDE_MODEL=claude-haiku-5-5` około 40× taniej.
   Przy kilkunastu zgłoszeniach to łącznie najwyżej kilka dolarów.
 
-Limit ocen: `AI_DAILY_LIMIT` na osobę dziennie (admin bez limitu).
+Limity ocen na osobę: `AI_DAILY_LIMIT` dziennie (domyślnie 8) i `AI_COOLDOWN_MINUTES` przerwy (domyślnie 5 min); liczą się tylko udane oceny, admin i opiekun konkursu są bez limitu.
 
 ### R2 zamiast KV
 

@@ -234,17 +234,32 @@ export async function reviewDesign(env: Env, input: { imageB64: string; title: s
   }
 }
 
-/** Dzienny limit ocen AI na osobę (admin bez limitu). Zwraca false, gdy limit wyczerpany. */
-export async function takeAiQuota(env: Env, userId: number, isAdmin: boolean): Promise<boolean> {
-  if (isAdmin) return true;
-  const limit = Number(env.AI_DAILY_LIMIT || 15);
-  const day = new Date().toISOString().slice(0, 10);
-  const row = await env.DB.prepare(
-    `INSERT INTO ai_usage (user_id, day, count) VALUES (?, ?, 1)
-     ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1
-     RETURNING count`,
+/**
+ * Limity ocen AI na osobę (admin i opiekun konkursu bez limitów):
+ *  - AI_DAILY_LIMIT ocen dziennie (domyślnie 8),
+ *  - AI_COOLDOWN_MINUTES przerwy między ocenami (domyślnie 5).
+ * Liczone są tylko udane oceny: błąd albo wyczerpana pula nie zużywa limitu.
+ */
+export async function aiLimitCheck(env: Env, userId: number): Promise<string | null> {
+  const limit = Number(env.AI_DAILY_LIMIT || 8);
+  const cooldown = Number(env.AI_COOLDOWN_MINUTES || 5) * 60;
+  const row = await env.DB.prepare('SELECT count, last_at FROM ai_usage WHERE user_id = ? AND day = ?')
+    .bind(userId, new Date().toISOString().slice(0, 10))
+    .first<{ count: number; last_at: number | null }>();
+  if ((row?.count ?? 0) >= limit) return `Wykorzystano dzienny limit ocen AI (${limit}). Spróbuj jutro.`;
+  const since = row?.last_at ? now() - row.last_at : Infinity;
+  if (since < cooldown) {
+    const min = Math.ceil((cooldown - since) / 60);
+    return `Kolejną ocenę AI możesz uruchomić za ${min} min. Przerwa chroni wspólny dzienny limit ocen.`;
+  }
+  return null;
+}
+
+export async function recordAiUse(env: Env, userId: number): Promise<void> {
+  await env.DB.prepare(
+    `INSERT INTO ai_usage (user_id, day, count, last_at) VALUES (?, ?, 1, unixepoch())
+     ON CONFLICT(user_id, day) DO UPDATE SET count = count + 1, last_at = unixepoch()`,
   )
-    .bind(userId, day)
-    .first<{ count: number }>();
-  return (row?.count ?? 0) <= limit;
+    .bind(userId, new Date().toISOString().slice(0, 10))
+    .run();
 }

@@ -22,6 +22,7 @@ export interface Env {
   CLAUDE_MODEL?: string;
   ANTHROPIC_API_KEY?: string;
   AI_DAILY_LIMIT?: string;
+  AI_COOLDOWN_MINUTES?: string;
 }
 
 export interface User {
