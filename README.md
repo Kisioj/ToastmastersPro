@@ -19,7 +19,7 @@ i konkurs na projekt rollupu z automatycznym sprawdzaniem plików. Działa w ca�
   Następnie AI ocenia zgodność z [Brand Manualem Toastmasters](https://content.toastmasters.org/image/upload/02330-001-0001-brand-manual.pdf)
   (logo, kolory, typografia, tagline, zdjęcia, czytelność z 3 m, układ na rollupie).
   Pliki do 95 MB są wysyłane w kawałkach po 20 MB.
-- Panel admina: członkowie (zaproszenia, role, dezaktywacja), konkursy (etapy, sposoby głosowania,
+- Panel admina: członkowie (zaproszenia, role, dezaktywacja, „Ostatnio online” zapisywane najwyżej co 5 min), konkursy (etapy, sposoby głosowania,
   widoczność wyników), propozycje, zgłoszenia, wyniki, zerowanie głosów.
 - **Rankingi** (np. „kto przyprowadzi najwięcej gości”): zasady, okres i tabela dla wszystkich; zarządzający
   dodają gości (kto przyprowadził, opcjonalnie imię gościa i data), ranking liczy się sam.

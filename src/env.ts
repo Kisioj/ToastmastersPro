@@ -35,6 +35,8 @@ export interface User {
   active: number;
   invited_at: number | null;
   last_login_at: number | null;
+  /** ostatnia aktywność na stronie, zapisywana najwyżej co SEEN_EVERY sekund */
+  last_seen_at: number | null;
   created_at: number;
   /** admin w trybie „podgląd jako członek”: role jest wtedy 'member', a uprawnienia opiekuna wyłączone */
   preview?: boolean;

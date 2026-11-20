@@ -7,6 +7,8 @@ const COOKIE = 'tm_session';
 const SESSION_DAYS = 60;
 /** Podgląd jako członek. Ciasteczko działa tylko dla admina i tylko odbiera uprawnienia, więc nie trzeba go podpisywać. */
 const PREVIEW_COOKIE = 'tm_preview';
+/** Co ile sekund najwyżej zapisujemy „ostatnio online” (żeby nie pisać do bazy przy każdym kliknięciu) */
+export const SEEN_EVERY = 5 * 60;
 
 export const TOKEN_TTL = {
   set_password: 14 * 24 * 3600, // link z zaproszeniem: 14 dni
@@ -24,7 +26,7 @@ export async function createSession(c: Context<AppEnv>, userId: number): Promise
       t + SESSION_DAYS * 86400,
       t,
     ),
-    c.env.DB.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').bind(t, userId),
+    c.env.DB.prepare('UPDATE users SET last_login_at = ?, last_seen_at = ? WHERE id = ?').bind(t, t, userId),
     // sprzątanie wygasłych sesji i tokenów przy okazji
     c.env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(t),
     c.env.DB.prepare('DELETE FROM tokens WHERE expires_at < ?').bind(t - 86400),
@@ -57,6 +59,15 @@ export const loadUser: MiddlewareHandler<AppEnv> = async (c, next) => {
     )
       .bind(hash, now())
       .first<User>();
+  }
+  if (user && (!user.last_seen_at || now() - user.last_seen_at >= SEEN_EVERY)) {
+    const seen = c.env.DB.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').bind(now(), user.id).run();
+    // zapis w tle, nie opóźnia odpowiedzi
+    try {
+      c.executionCtx.waitUntil(seen);
+    } catch {
+      await seen;
+    }
   }
   if (user?.role === 'admin' && getCookie(c, PREVIEW_COOKIE) === '1') user = { ...user, role: 'member', preview: true };
   c.set('user', user);

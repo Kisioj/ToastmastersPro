@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv, Contest, ContestSettings, EntryRow, User } from '../env';
 import { aiClubLimit, aiProvider, aiQuotaExhausted, aiUsageToday } from '../lib/ai';
-import { createToken, linkFor, refererPath, setPreview } from '../lib/auth';
+import { createToken, linkFor, refererPath, SEEN_EVERY, setPreview } from '../lib/auth';
 import { canManage, computeTallies, getContest, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS, entryReviews } from '../lib/contests';
 import { setFlash, takeFlash } from '../lib/flash';
 import { announcementMail, inviteMail, mailAllowed, mailConfigured, mailDailyLimit, mailsSentLast24h, sendAnnouncement, sendMail } from '../lib/mail';
@@ -78,6 +78,19 @@ function announcementTemplate(ct: Contest): { subject: string; message: string }
   return { subject: `${ct.title}: wyniki`, message: `Konkurs „${ct.title}” jest zakończony. Wyniki znajdziesz w strefie członka.` };
 }
 
+/** „5 min temu”, „3 godz. temu”, „2 dni temu”; dokładność 5 min, bo tak często zapisujemy aktywność */
+function timeAgo(ts: number | null, t: number): string {
+  if (!ts) return 'nigdy';
+  const s = Math.max(0, t - ts);
+  if (s < SEEN_EVERY) return 'teraz';
+  const min = Math.floor(s / 60);
+  if (min < 60) return `${min} min temu`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `${h} godz. temu`;
+  const d = Math.floor(h / 24);
+  return `${d} ${plural(d, 'dzień', 'dni', 'dni')} temu`;
+}
+
 function memberStatus(u: User): { cls: string; text: string } {
   if (!u.active) return { cls: 'closed', text: 'Nieaktywny' };
   if (u.password_hash) return { cls: 'ok', text: 'Ma hasło' };
@@ -135,6 +148,8 @@ admin.get('/', requireAdmin, async (c) => {
   const sent24 = await mailsSentLast24h(c.env);
   const pending = users.filter((u) => u.active && !u.invited_at && !u.password_hash);
   const batch = pending.slice(0, INVITE_BATCH);
+  const t = now();
+  const seenWithin = (sec: number) => users.filter((u) => u.last_seen_at && t - u.last_seen_at < sec).length;
 
   return c.html(
     <Layout title="Panel admina" user={c.var.user} flash={takeFlash(c)} scripts={['/js/app.js', '/js/admin.js']} nav="admin">
@@ -269,6 +284,10 @@ admin.get('/', requireAdmin, async (c) => {
                 </form>
               )}
             </div>
+            <p class="muted small" style="margin:0 0 16px">
+              Online teraz: <strong>{seenWithin(SEEN_EVERY)}</strong> · w ciągu 24 h: <strong>{seenWithin(86400)}</strong> · w ciągu 7 dni:{' '}
+              <strong>{seenWithin(7 * 86400)}</strong>. „Teraz” znaczy w ostatnich 5 minutach.
+            </p>
             <form class="form card" method="post" action="/admin/czlonkowie/podglad" style="margin-bottom:20px">
               <label for="members">
                 Dodaj osoby albo wklej całą listę członków
@@ -295,7 +314,7 @@ admin.get('/', requireAdmin, async (c) => {
                   <tr>
                     <th>Osoba</th>
                     <th>Status</th>
-                    <th>Ostatnie logowanie</th>
+                    <th>Ostatnio online</th>
                     <th>Akcje</th>
                   </tr>
                 </thead>
@@ -311,7 +330,18 @@ admin.get('/', requireAdmin, async (c) => {
                         <td data-label="Status">
                           <span class={`pill ${st.cls}`}>{st.text}</span>
                         </td>
-                        <td data-label="Ostatnie logowanie">{fmtDate(u.last_login_at)}</td>
+                        <td data-label="Ostatnio online">
+                          {u.last_seen_at ? (
+                            <>
+                              <span class={t - u.last_seen_at < SEEN_EVERY ? 'pill ok' : undefined}>{timeAgo(u.last_seen_at, t)}</span>
+                              <span class="sub">
+                                <time datetime={new Date(u.last_seen_at * 1000).toISOString()}>{fmtDate(u.last_seen_at)}</time>
+                              </span>
+                            </>
+                          ) : (
+                            <span class="muted">nigdy</span>
+                          )}
+                        </td>
                         <td class="actions-cell">
                           <div class="row" style="gap:6px">
                             {u.active ? (
