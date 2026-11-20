@@ -24,6 +24,23 @@ export function mailConfigured(env: Env): boolean {
  */
 export const MAIL_COOLDOWN = 5 * 60;
 
+/** Ile dni trzymamy treść wysłanych maili (sam wpis w mail_log zostaje) */
+const MAIL_BODY_DAYS = 365;
+
+/** Tajne tokeny w linkach do logowania i ustawienia hasła: w zapisanej treści maila zastępujemy je kropkami */
+export function redactSecrets(s: string): string {
+  return s.replace(/(\/(?:ustaw-haslo|zaloguj)\/)[A-Za-z0-9_-]{16,}/g, '$1•••••');
+}
+
+function bodyInsert(env: Env, msg: { subject: string; text: string; html: string }, t: number): D1PreparedStatement {
+  return env.DB.prepare('INSERT INTO mail_bodies (subject, text, html, created_at) VALUES (?, ?, ?, ?)').bind(
+    msg.subject,
+    redactSecrets(msg.text),
+    redactSecrets(msg.html),
+    t,
+  );
+}
+
 export function mailDailyLimit(env: Env): number {
   return Number(env.MAIL_DAILY_LIMIT || 300);
 }
@@ -95,9 +112,19 @@ export async function sendMail(
       result = { sent: false, mode: 'smtp', error };
     }
   }
-  await env.DB.prepare('INSERT INTO mail_log (to_email, subject, status, error, created_at) VALUES (?, ?, ?, ?, ?)')
-    .bind(msg.to, msg.subject, result.sent ? 'sent' : result.mode === 'off' ? 'not_configured' : 'error', result.error ?? null, now())
-    .run();
+  // treść i wpis w jednej transakcji: last_insert_rowid() wskazuje właśnie zapisaną treść
+  const t = now();
+  await env.DB.batch([
+    bodyInsert(env, msg, t),
+    env.DB.prepare('INSERT INTO mail_log (to_email, subject, status, error, created_at, body_id) VALUES (?, ?, ?, ?, ?, last_insert_rowid())').bind(
+      msg.to,
+      msg.subject,
+      result.sent ? 'sent' : result.mode === 'off' ? 'not_configured' : 'error',
+      result.error ?? null,
+      t,
+    ),
+    env.DB.prepare('DELETE FROM mail_bodies WHERE created_at < ?').bind(t - MAIL_BODY_DAYS * 86400),
+  ]);
   return result;
 }
 
@@ -173,6 +200,13 @@ export async function sendAnnouncement(
 
   const port = Number(env.SMTP_PORT || 465);
   const from = { name: env.MAIL_FROM_NAME || 'Toastmasters Częstochowa', email: env.SMTP_USER! };
+  // jedna zapisana treść dla wszystkich odbiorców
+  const body = await env.DB.prepare(
+    'INSERT INTO mail_bodies (subject, text, html, created_at) VALUES (?, ?, ?, ?) RETURNING id',
+  )
+    .bind(msg.subject, redactSecrets(msg.text), redactSecrets(msg.html), t)
+    .first<{ id: number }>();
+  const bodyId = body?.id ?? null;
   const logs: D1PreparedStatement[] = [];
   let sent = 0;
   let error: string | undefined;
@@ -193,10 +227,14 @@ export async function sendAnnouncement(
         { from, to: from, bcc: chunk, subject: msg.subject, text: msg.text, html: msg.html },
       );
       sent += chunk.length;
-      for (const e of chunk) logs.push(env.DB.prepare("INSERT INTO mail_log (to_email, subject, status, created_at) VALUES (?, ?, 'sent', ?)").bind(e, msg.subject, t));
+      for (const e of chunk)
+        logs.push(env.DB.prepare("INSERT INTO mail_log (to_email, subject, status, created_at, body_id) VALUES (?, ?, 'sent', ?, ?)").bind(e, msg.subject, t, bodyId));
     } catch (e) {
       error = `Błąd wysyłki: ${e instanceof Error ? e.message : String(e)}`;
-      for (const addr of chunk) logs.push(env.DB.prepare("INSERT INTO mail_log (to_email, subject, status, error, created_at) VALUES (?, ?, 'error', ?, ?)").bind(addr, msg.subject, error, t));
+      for (const addr of chunk)
+        logs.push(
+          env.DB.prepare("INSERT INTO mail_log (to_email, subject, status, error, created_at, body_id) VALUES (?, ?, 'error', ?, ?, ?)").bind(addr, msg.subject, error, t, bodyId),
+        );
     }
   }
   if (logs.length) await env.DB.batch(logs);

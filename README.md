@@ -93,7 +93,11 @@ nawet na 24 h, także ręczną korespondencję klubu):
 - zaproszenia hurtowe po 8 naraz (darmowy plan Workers: maks. 50 podżądań na żądanie, D1 i SMTP też się liczą);
   przed wysłaniem pytanie z listą tych 8 osób i wychodzi dokładnie do nich,
 - przy każdej osobie „Link do skopiowania” tworzy link z zaproszeniem bez wysyłania maila (do przesłania np. SMS-em),
-  a „Wyślij zaproszenie” pyta przed wysłaniem. Nowy link unieważnia poprzedni, więc wtedy też jest pytanie.
+  a „Wyślij zaproszenie” najpierw pokazuje podgląd maila. Nowy link unieważnia poprzedni, więc wtedy też jest pytanie,
+- przed każdą wysyłką z panelu (zaproszenia, powiadomienie klubowiczów, uwagi opiekuna z mailem) okno „Podgląd maila”
+  pokazuje adresata, temat i dokładną treść; mail wychodzi dopiero po „Wyślij”,
+- Panel admina → „Wysłane maile i ich treść”: historia wysyłek z pełną treścią (tabela `mail_bodies`, 365 dni).
+  Tajna część linków do logowania i ustawienia hasła jest przed zapisem zastępowana kropkami.
 
 ### Import listy członków
 

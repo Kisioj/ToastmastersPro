@@ -343,6 +343,17 @@ dialog.lightbox .lb-head { display: flex; align-items: center; gap: 12px; paddin
 dialog.lightbox .lb-head h2 { flex: 1; margin: 0; font-size: 1.05rem; }
 dialog.lightbox .lb-body { padding: 12px; overflow: auto; max-height: calc(94vh - 64px); }
 dialog.lightbox img { max-height: calc(94vh - 100px); width: auto; margin: 0 auto; border-radius: 6px; }
+/* podgląd i historia maili */
+dialog.mail-dialog { width: min(94vw, 720px); }
+dialog.mail-dialog form { display: flex; flex-direction: column; max-height: 94vh; margin: 0; }
+dialog.mail-dialog .lb-body { flex: 1; min-height: 0; max-height: none; }
+dialog.mail-dialog .lb-foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+dialog.mail-dialog .mail-frame { height: min(52vh, 620px); }
+.mail-meta { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+.mail-meta dt { color: var(--muted, #4a5661); font-weight: 600; }
+.mail-meta dd { margin: 0; overflow-wrap: anywhere; }
+.mail-frame { display: block; width: 100%; height: min(60vh, 620px); border: 1px solid var(--line); border-radius: 10px; background: #f3f6f8; }
+.mail-text { margin: 8px 0 0; padding: 12px; border-radius: 10px; background: var(--soft); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9rem; }
 
 /* stopka */
 .foot { margin-top: 48px; padding: 32px 0 28px; background: var(--blue-2); color: #d3e0e8; font-size: .95rem; }

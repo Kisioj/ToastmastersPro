@@ -16,6 +16,78 @@ document.addEventListener('submit', (e) => {
   for (const input of e.target.querySelectorAll('.pw-field input')) input.type = 'password';
 });
 
+// — Podgląd maila przed wysłaniem: dokładna treść w oknie, mail wychodzi dopiero po „Wyślij” —
+let mailDialog;
+function showMail({ to, subject, html, note, okLabel }) {
+  if (!mailDialog) {
+    mailDialog = document.createElement('dialog');
+    mailDialog.className = 'lightbox mail-dialog';
+    mailDialog.setAttribute('closedby', 'any');
+    mailDialog.setAttribute('aria-labelledby', 'md-title');
+    mailDialog.innerHTML = `
+      <form method="dialog">
+        <div class="lb-head">
+          <h2 id="md-title">Podgląd maila</h2>
+          <button class="btn ghost small" value="cancel">Anuluj</button>
+        </div>
+        <div class="lb-body stack" style="--gap:12px">
+          <dl class="mail-meta"><dt>Do</dt><dd data-md="to"></dd><dt>Temat</dt><dd data-md="subject"></dd></dl>
+          <p class="hint" data-md="note"></p>
+          <iframe class="mail-frame" sandbox="" title="Treść maila"></iframe>
+        </div>
+        <div class="lb-foot">
+          <button class="btn" value="ok" data-md="ok"></button>
+          <button class="btn ghost" value="cancel">Anuluj</button>
+        </div>
+      </form>`;
+    document.body.append(mailDialog);
+  }
+  const $ = (k) => mailDialog.querySelector(`[data-md="${k}"]`);
+  $('to').textContent = to;
+  $('subject').textContent = subject;
+  $('note').textContent = note || '';
+  $('note').hidden = !note;
+  $('ok').textContent = okLabel || 'Wyślij';
+  mailDialog.querySelector('iframe').srcdoc = html;
+  mailDialog.returnValue = '';
+  mailDialog.showModal();
+  return new Promise((resolve) => mailDialog.addEventListener('close', () => resolve(mailDialog.returnValue === 'ok'), { once: true }));
+}
+window.tmShowMail = showMail;
+
+// Formularz z data-mail-preview: najpierw podgląd (POST tych samych pól), wysyłka dopiero po potwierdzeniu.
+// data-mail-preview-if="pole": podgląd tylko, gdy to pole wyboru jest zaznaczone (bez niego mail nie wychodzi).
+// Faza przechwytywania: zatrzymujemy inne obsługi (np. blokadę podwójnego wysłania), dopóki nie ma zgody.
+document.addEventListener(
+  'submit',
+  async (e) => {
+    const form = e.target.closest('form[data-mail-preview]');
+    if (!form) return;
+    if (form.dataset.previewOk) {
+      delete form.dataset.previewOk;
+      return;
+    }
+    const cond = form.dataset.mailPreviewIf;
+    if (cond && !form.elements[cond]?.checked) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const submitter = e.submitter;
+    const go = () => {
+      form.dataset.previewOk = '1';
+      form.requestSubmit(submitter && submitter.form === form ? submitter : undefined);
+    };
+    try {
+      const res = await fetch(form.dataset.mailPreview, { method: 'POST', body: new FormData(form) });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Nie udało się przygotować podglądu maila.');
+      if (data.skip || (await showMail(data))) go();
+    } catch (err) {
+      window.alert(err.message);
+    }
+  },
+  true,
+);
+
 // — Potwierdzenie przed niebezpieczną akcją —
 document.addEventListener('submit', (e) => {
   const form = e.target.closest('form[data-confirm]');

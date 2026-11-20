@@ -1,13 +1,23 @@
 // Panel admina: linki z zaproszeniem. „Link do skopiowania” niczego nie wysyła, „Wyślij zaproszenie” wysyła maila.
-// Przed mailem (i przed nowym linkiem, który unieważnia poprzedni) pytamy o potwierdzenie.
+// Przed mailem pokazujemy jego dokładną treść (okno z app.js), przed nowym linkiem pytamy, bo unieważnia poprzedni.
 
 document.addEventListener('click', async (e) => {
   const btn = e.target.closest('[data-invite], [data-invite-link]');
   if (!btn || btn.getAttribute('aria-disabled') === 'true') return;
   const byMail = btn.hasAttribute('data-invite');
   const id = byMail ? btn.dataset.invite : btn.dataset.inviteLink;
-  if (btn.dataset.ask && !window.confirm(btn.dataset.ask)) return;
   const out = document.querySelector(`[data-invite-out="${id}"]`);
+  if (byMail) {
+    try {
+      const res = await fetch(`/admin/czlonkowie/${id}/podglad-maila`, { method: 'POST' });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Nie udało się przygotować podglądu maila.');
+      if (!(await window.tmShowMail(data))) return;
+    } catch (err) {
+      out.replaceChildren(Object.assign(document.createElement('p'), { className: 'flash err small', textContent: err.message }));
+      return;
+    }
+  } else if (btn.dataset.ask && !window.confirm(btn.dataset.ask)) return;
   btn.setAttribute('aria-disabled', 'true');
   btn.classList.add('busy');
   try {
@@ -57,7 +67,7 @@ document.addEventListener('click', async (e) => {
     out.replaceChildren(wrap);
     // osoba ma już link: kolejne kliknięcia (oba przyciski) tworzą nowy link i pytają o zgodę
     for (const b of document.querySelectorAll(`[data-invite="${id}"], [data-invite-link="${id}"]`)) {
-      b.dataset.ask = b.dataset.askAgain;
+      if (b.dataset.askAgain) b.dataset.ask = b.dataset.askAgain;
       b.textContent = b.dataset.labelAgain;
     }
   } catch (err) {

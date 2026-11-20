@@ -86,13 +86,23 @@ function memberStatus(u: User): { cls: string; text: string } {
   return { cls: 'draft', text: 'Bez zaproszenia' };
 }
 
+/** Mail z zaproszeniem: ta sama funkcja dla wysyłki i podglądu, więc podgląd pokazuje dokładnie to, co wyjdzie */
+function inviteFor(u: User, link: string) {
+  return { to: u.email, toName: u.name, ...inviteMail(u.name.split(' ')[0] ?? '', link) };
+}
+
+/** Odpowiedź dla okna „Podgląd maila” (public/js/app.js) */
+function mailPreview(c: Context<AppEnv>, p: { to: string; subject: string; html: string; note?: string; okLabel?: string }) {
+  return c.json({ ok: true, ...p });
+}
+
 async function sendInvite(c: Context<AppEnv>, u: User) {
   // limit sprawdzamy przed utworzeniem tokenu — nowy link unieważnia poprzedni, wysłany mailem
   const allowed = await mailAllowed(c.env, u.email);
   if (!allowed.ok) return { link: null, sent: false, mode: 'blocked' as const, error: allowed.reason };
   const token = await createToken(c.env.DB, u.id, 'set_password');
   const link = linkFor(c, 'set_password', token);
-  const res = await sendMail(c.env, { to: u.email, toName: u.name, ...inviteMail(u.name.split(' ')[0] ?? '', link) }, { alreadyChecked: true });
+  const res = await sendMail(c.env, inviteFor(u, link), { alreadyChecked: true });
   await c.env.DB.prepare('UPDATE users SET invited_at = ? WHERE id = ?').bind(now(), u.id).run();
   return { link, ...res };
 }
@@ -104,12 +114,10 @@ async function inviteLink(c: Context<AppEnv>, u: User): Promise<string> {
   return linkFor(c, 'set_password', token);
 }
 
-/** Teksty pytań przed utworzeniem linku: nowy link unieważnia poprzedni */
-function inviteAsk(u: User, byMail: boolean, again: boolean): string {
+/** Pytanie przed utworzeniem linku do skopiowania: nowy link unieważnia poprzedni */
+function inviteAsk(u: User, again: boolean): string {
   const who = u.name ? `${u.name} (${u.email})` : u.email;
-  const old = ' Jeśli ta osoba dostała już wcześniej link, przestanie on działać.';
-  if (byMail) return again ? `Wysłać mailem nowy link do ustawienia hasła dla: ${who}?${old}` : `Wysłać maila z zaproszeniem do: ${who}?`;
-  return again ? `Utworzyć nowy link do ustawienia hasła dla: ${who}? Mail nie zostanie wysłany.${old}` : '';
+  return again ? `Utworzyć nowy link do ustawienia hasła dla: ${who}? Mail nie zostanie wysłany. Jeśli ta osoba dostała już wcześniej link, przestanie on działać.` : '';
 }
 
 admin.get('/', requireAdmin, async (c) => {
@@ -127,10 +135,6 @@ admin.get('/', requireAdmin, async (c) => {
   const sent24 = await mailsSentLast24h(c.env);
   const pending = users.filter((u) => u.active && !u.invited_at && !u.password_hash);
   const batch = pending.slice(0, INVITE_BATCH);
-  const bulkAsk =
-    `Wysłać teraz maile z zaproszeniem do ${batch.length} ${plural(batch.length, 'osoby', 'osób', 'osób')}?\n\n` +
-    batch.map((u) => `• ${u.name || u.email}`).join('\n') +
-    (pending.length > batch.length ? `\n\nPozostałe ${pending.length - batch.length} wyślesz kolejnym kliknięciem.` : '');
 
   return c.html(
     <Layout title="Panel admina" user={c.var.user} flash={takeFlash(c)} scripts={['/js/app.js', '/js/admin.js']} nav="admin">
@@ -153,6 +157,9 @@ admin.get('/', requireAdmin, async (c) => {
               <p class="muted small">
                 Wysłane w ostatnich 24 h: <strong>{sent24}</strong> z limitu {mailDailyLimit(c.env)} (Gmail pozwala na ok. 500/dobę na całe konto). Maile idą
                 tylko do aktywnych osób z listy, maks. 1 na 5 minut na adres.
+              </p>
+              <p class="small">
+                <a href="/admin/maile">Wysłane maile i ich treść</a>
               </p>
               {lastErr && (
                 <p class="flash err small">
@@ -254,7 +261,7 @@ admin.get('/', requireAdmin, async (c) => {
               <h2 style="margin:0">Członkowie ({users.filter((u) => u.active).length})</h2>
               <span class="spacer"></span>
               {mailOn && pending.length > 0 && (
-                <form method="post" action="/admin/czlonkowie/zaproszenia" data-confirm={bulkAsk}>
+                <form method="post" action="/admin/czlonkowie/zaproszenia" data-mail-preview="/admin/czlonkowie/zaproszenia/podglad">
                   <input type="hidden" name="ids" value={batch.map((u) => u.id).join(',')} />
                   <button class="btn" type="submit">
                     Wyślij zaproszenia niezaproszonym ({pending.length})
@@ -314,8 +321,8 @@ admin.get('/', requireAdmin, async (c) => {
                                   class="btn ghost small"
                                   data-invite-link={u.id}
                                   data-email={u.email}
-                                  data-ask={inviteAsk(u, false, Boolean(u.invited_at || u.password_hash))}
-                                  data-ask-again={inviteAsk(u, false, true)}
+                                  data-ask={inviteAsk(u, Boolean(u.invited_at || u.password_hash))}
+                                  data-ask-again={inviteAsk(u, true)}
                                   data-label-again="Nowy link do skopiowania"
                                 >
                                   {u.invited_at || u.password_hash ? 'Nowy link do skopiowania' : 'Link do skopiowania'}
@@ -326,8 +333,6 @@ admin.get('/', requireAdmin, async (c) => {
                                     class="btn small"
                                     data-invite={u.id}
                                     data-email={u.email}
-                                    data-ask={inviteAsk(u, true, Boolean(u.invited_at || u.password_hash))}
-                                    data-ask-again={inviteAsk(u, true, true)}
                                     data-label-again="Nowy link mailem"
                                   >
                                     {u.invited_at || u.password_hash ? 'Nowy link mailem' : 'Wyślij zaproszenie'}
@@ -544,6 +549,41 @@ admin.post('/czlonkowie/zaproszenia', requireAdmin, async (c) => {
   return c.redirect('/admin');
 });
 
+admin.post('/czlonkowie/:id/podglad-maila', requireAdmin, async (c) => {
+  const u = await c.env.DB.prepare('SELECT * FROM users WHERE id = ? AND active = 1').bind(Number(c.req.param('id'))).first<User>();
+  if (!u) return c.json({ ok: false, error: 'Nie ma takiej osoby.' }, 404);
+  const m = inviteFor(u, `${new URL(c.req.url).origin}/ustaw-haslo/•••••`);
+  const again = u.invited_at || u.password_hash ? ' Ta osoba ma już link, więc poprzedni przestanie działać.' : '';
+  return mailPreview(c, {
+    to: u.name ? `${u.name} <${u.email}>` : u.email,
+    subject: m.subject,
+    html: m.html,
+    note: `Tak będzie wyglądał mail. Link w przycisku powstanie w chwili wysyłki (ważny 14 dni).${again}`,
+    okLabel: 'Wyślij maila',
+  });
+});
+
+admin.post('/czlonkowie/zaproszenia/podglad', requireAdmin, async (c) => {
+  const f = await c.req.parseBody();
+  const ids = String(f.ids ?? '').split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, INVITE_BATCH);
+  if (!ids.length) return c.json({ ok: false, error: 'Nie wybrano nikogo do zaproszenia.' }, 400);
+  const { results } = await c.env.DB.prepare(
+    `SELECT * FROM users WHERE id IN (${ids.map(() => '?').join(',')}) AND active = 1 AND invited_at IS NULL AND password_hash IS NULL`,
+  )
+    .bind(...ids)
+    .all<User>();
+  if (!results.length) return c.json({ ok: false, error: 'Te osoby mają już zaproszenia. Odśwież stronę.' }, 409);
+  const first = results[0]!;
+  const m = inviteFor(first, `${new URL(c.req.url).origin}/ustaw-haslo/•••••`);
+  return mailPreview(c, {
+    to: `${results.length} ${plural(results.length, 'osoba', 'osoby', 'osób')}: ${results.map((u) => u.name || u.email).join(', ')}`,
+    subject: m.subject,
+    html: m.html,
+    note: `Poniżej mail dla: ${first.name || first.email}. Każda osoba dostanie taki sam, ze swoim imieniem i własnym linkiem (ważny 14 dni).`,
+    okLabel: `Wyślij do ${results.length} ${plural(results.length, 'osoby', 'osób', 'osób')}`,
+  });
+});
+
 admin.post('/czlonkowie/:id/link', requireAdmin, async (c) => {
   const u = await c.env.DB.prepare('SELECT * FROM users WHERE id = ? AND active = 1').bind(Number(c.req.param('id'))).first<User>();
   if (!u) return c.json({ ok: false, error: 'Nie ma takiej osoby.' }, 404);
@@ -573,6 +613,146 @@ admin.post('/czlonkowie/:id', requireAdmin, async (c) => {
   else if (action === 'admin' || action === 'member') await db.prepare('UPDATE users SET role = ? WHERE id = ?').bind(action, id).run();
   setFlash(c, 'ok', 'Zapisano.');
   return c.redirect('/admin');
+});
+
+type MailGroup = { body_id: number | null; at: number; subject: string; n: number; first_to: string; ok: number; off: number };
+
+function mailGroupStatus(r: { n: number; ok: number; off: number }): { cls: string; text: string } {
+  if (r.ok === r.n) return { cls: 'ok', text: 'Wysłany' };
+  if (r.off === r.n) return { cls: 'draft', text: 'Maile wyłączone' };
+  if (r.ok === 0) return { cls: 'err', text: 'Nie wysłano' };
+  return { cls: 'warn', text: `Wysłano ${r.ok} z ${r.n}` };
+}
+
+/** Historia maili: jeden wiersz na treść (powiadomienie w ukrytej kopii to jeden mail do wielu osób) */
+admin.get('/maile', requireAdmin, async (c) => {
+  const { results } = await c.env.DB.prepare(
+    `SELECT body_id, MIN(created_at) AS at, MAX(subject) AS subject, COUNT(*) AS n, MIN(to_email) AS first_to,
+            SUM(status = 'sent') AS ok, SUM(status = 'not_configured') AS off
+     FROM mail_log GROUP BY COALESCE(body_id, -id) ORDER BY at DESC LIMIT 100`,
+  ).all<MailGroup>();
+  return c.html(
+    <Layout title="Wysłane maile" user={c.var.user} nav="admin">
+      <PageHead eyebrow="Panel admina" title="Wysłane maile" lead="Ostatnie 100 wysyłek. Kliknij temat, żeby zobaczyć dokładną treść maila." />
+      <section class="section tight">
+        <div class="wrap stack">
+          <p style="margin:0">
+            <a href="/admin">Wróć do panelu admina</a>
+          </p>
+          {results.length === 0 ? (
+            <p class="empty-note">Nie wysłano jeszcze żadnego maila.</p>
+          ) : (
+            <div class="table-wrapper" tabindex={0} role="region" aria-labelledby="mails-cap">
+              <table class="data">
+                <caption id="mails-cap" class="visually-hidden">
+                  Wysłane maile
+                </caption>
+                <thead>
+                  <tr>
+                    <th>Temat</th>
+                    <th>Do</th>
+                    <th>Kiedy</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {results.map((r) => {
+                    const st = mailGroupStatus(r);
+                    return (
+                      <tr>
+                        <th>
+                          {r.body_id ? (
+                            <a href={`/admin/maile/${r.body_id}`}>{r.subject}</a>
+                          ) : (
+                            <>
+                              {r.subject}
+                              <span class="sub">treść niezapisana (mail sprzed 21.11.2026)</span>
+                            </>
+                          )}
+                        </th>
+                        <td data-label="Do">{r.n > 1 ? `${r.n} ${plural(r.n, 'osoba', 'osoby', 'osób')}` : r.first_to}</td>
+                        <td data-label="Kiedy">{fmtDate(r.at)}</td>
+                        <td data-label="Status">
+                          <span class={`pill ${st.cls}`}>{st.text}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </section>
+    </Layout>,
+  );
+});
+
+admin.get('/maile/:id', requireAdmin, async (c) => {
+  const db = c.env.DB;
+  const id = Number(c.req.param('id'));
+  const body = await db
+    .prepare('SELECT id, subject, text, html, created_at FROM mail_bodies WHERE id = ?')
+    .bind(id)
+    .first<{ id: number; subject: string; text: string; html: string; created_at: number }>();
+  if (!body) return c.notFound();
+  const { results: rcpt } = await db
+    .prepare('SELECT to_email, status, error FROM mail_log WHERE body_id = ? ORDER BY to_email')
+    .bind(id)
+    .all<{ to_email: string; status: string; error: string | null }>();
+  const st = mailGroupStatus({ n: rcpt.length, ok: rcpt.filter((r) => r.status === 'sent').length, off: rcpt.filter((r) => r.status === 'not_configured').length });
+  const errors = [...new Set(rcpt.map((r) => r.error).filter(Boolean))];
+  return c.html(
+    <Layout title={body.subject} user={c.var.user} nav="admin">
+      <PageHead eyebrow="Wysłany mail" title={body.subject} />
+      <section class="section tight">
+        <div class="wrap stack">
+          <p style="margin:0">
+            <a href="/admin/maile">Wszystkie wysłane maile</a>
+          </p>
+          <dl class="mail-meta">
+            <dt>Kiedy</dt>
+            <dd>{fmtDate(body.created_at)}</dd>
+            <dt>Od</dt>
+            <dd>
+              {c.env.MAIL_FROM_NAME || 'Toastmasters Częstochowa'} &lt;{c.env.SMTP_USER}&gt;
+            </dd>
+            <dt>Do</dt>
+            <dd>
+              {rcpt.length === 1 ? rcpt[0]!.to_email : `${rcpt.length} ${plural(rcpt.length, 'osoba', 'osoby', 'osób')} w ukrytej kopii`}
+            </dd>
+            <dt>Status</dt>
+            <dd>
+              <span class={`pill ${st.cls}`}>{st.text}</span>
+            </dd>
+          </dl>
+          {errors.length > 0 && <p class="flash err small">Błąd wysyłki: {errors.join('; ')}</p>}
+          {rcpt.length > 1 && (
+            <details class="more">
+              <summary>Lista odbiorców ({rcpt.length})</summary>
+              <ul class="small">
+                {rcpt.map((r) => (
+                  <li>
+                    {r.to_email}
+                    {r.status !== 'sent' && <span class="pill err">nie wysłano</span>}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          <p class="hint" style="margin:0">
+            Poniżej dokładnie to, co dostał odbiorca. Tylko tajna część linków do logowania i ustawienia hasła jest ukryta (•••••), żeby nikt nie mógł ich
+            użyć.
+          </p>
+          <iframe class="mail-frame" sandbox="" srcdoc={body.html} title="Treść maila"></iframe>
+          <details class="more">
+            <summary>Wersja tekstowa (dla programów pocztowych bez HTML)</summary>
+            <pre class="mail-text">{body.text}</pre>
+          </details>
+        </div>
+      </section>
+    </Layout>,
+  );
 });
 
 admin.post('/mail-test', requireAdmin, async (c) => {
@@ -989,10 +1169,11 @@ admin.get('/konkursy/:id', async (c) => {
                 class="form"
                 method="post"
                 action={`/admin/konkursy/${contest.id}/powiadom`}
-                data-confirm={`Wysłać maila do ${activeCount} ${plural(activeCount, 'osoby', 'osób', 'osób')}?${
-                  announcements.some((a) => a.phase === contest.phase) ? ' Uwaga: na tym etapie powiadomienie już raz poszło.' : ''
-                }`}
+                data-mail-preview={`/admin/konkursy/${contest.id}/powiadom/podglad`}
               >
+                {announcements.some((a) => a.phase === contest.phase) && (
+                  <p class="flash info small" style="margin:0">Na tym etapie powiadomienie już raz poszło.</p>
+                )}
                 <p class="hint" style="margin:0">
                   Jeden mail do wszystkich aktywnych członków ({activeCount}) w ukrytej kopii, więc nikt nie widzi adresów innych osób. Link do konkursu i
                   podpowiedź, jak się zalogować, dodamy sami. Treść możesz poprawić przed wysłaniem.
@@ -1151,6 +1332,32 @@ admin.post('/konkursy/:id', async (c) => {
   return c.redirect(`/admin/konkursy/${id}`);
 });
 
+function announcementInput(f: Record<string, unknown>) {
+  return {
+    subject: String(f.subject ?? '').trim().replace(/\s*—\s*/g, ' - ').slice(0, 150),
+    message: String(f.message ?? '').trim().replace(/\s*—\s*/g, ' - ').slice(0, 2000),
+  };
+}
+const contestLink = (c: Context<AppEnv>, contest: Contest) => `${new URL(c.req.url).origin}/konkursy/${contest.slug}`;
+
+admin.post('/konkursy/:id/powiadom/podglad', async (c) => {
+  const id = Number(c.req.param('id'));
+  if (c.var.user?.preview || !(await canManage(c.env.DB, c.var.user!, id))) return c.json({ ok: false, error: 'Brak dostępu do tego konkursu.' }, 403);
+  const contest = await getContest(c.env.DB, id);
+  if (!contest) return c.json({ ok: false, error: 'Nie ma takiego konkursu.' }, 404);
+  const { subject, message } = announcementInput(await c.req.parseBody());
+  if (!subject || !message) return c.json({ ok: false, error: 'Podaj temat i treść.' }, 400);
+  const n = (await c.env.DB.prepare('SELECT COUNT(*) AS n FROM users WHERE active = 1').first<{ n: number }>())?.n ?? 0;
+  const m = announcementMail(subject, message, contestLink(c, contest));
+  return mailPreview(c, {
+    to: `${n} ${plural(n, 'aktywny członek', 'aktywnych członków', 'aktywnych członków')} w ukrytej kopii (nikt nie widzi adresów innych osób)`,
+    subject: m.subject,
+    html: m.html,
+    note: 'Tak będzie wyglądał mail. Pominiemy osoby, które dostały maila w ostatnich 5 minutach.',
+    okLabel: `Wyślij do ${n} ${plural(n, 'osoby', 'osób', 'osób')}`,
+  });
+});
+
 admin.post('/konkursy/:id/powiadom', async (c) => {
   const id = Number(c.req.param('id'));
   const denied = await guardContest(c, id);
@@ -1163,16 +1370,13 @@ admin.post('/konkursy/:id/powiadom', async (c) => {
     setFlash(c, 'err', 'Konkurs jest w szkicu, członkowie go nie widzą.');
     return c.redirect(back);
   }
-  const f = await c.req.parseBody();
-  const subject = String(f.subject ?? '').trim().replace(/\s*—\s*/g, ' - ').slice(0, 150);
-  const message = String(f.message ?? '').trim().replace(/\s*—\s*/g, ' - ').slice(0, 2000);
+  const { subject, message } = announcementInput(await c.req.parseBody());
   if (!subject || !message) {
     setFlash(c, 'err', 'Podaj temat i treść.');
     return c.redirect(back);
   }
   const { results } = await db.prepare('SELECT email FROM users WHERE active = 1').all<{ email: string }>();
-  const link = `${new URL(c.req.url).origin}/konkursy/${contest.slug}`;
-  const r = await sendAnnouncement(c.env, results.map((u) => u.email), announcementMail(subject, message, link));
+  const r = await sendAnnouncement(c.env, results.map((u) => u.email), announcementMail(subject, message, contestLink(c, contest)));
   if (r.sent) {
     await db
       .prepare('INSERT INTO contest_announcements (contest_id, phase, subject, recipients, skipped, sent_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')

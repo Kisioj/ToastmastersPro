@@ -1,5 +1,7 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import type { AppEnv, Contest, EntryRow, User } from '../env';
+import type { ReviewVerdict } from '../lib/contests';
 import {
   canManage,
   canSeeResults,
@@ -104,6 +106,19 @@ member.get('/konkursy/:slug', async (c) => {
     .bind(contest.id, user.id)
     .first<{ preferred: string; comment: string }>();
   const testMode = isTestMode(contest);
+  // odpowiedzi na ankietę „który sposób najlepszy” widzi admin i opiekun konkursu
+  const allFeedback =
+    manager && testMode
+      ? (
+          await db
+            .prepare(
+              `SELECT f.preferred, f.comment, COALESCE(NULLIF(u.name, ''), u.email) AS who FROM method_feedback f JOIN users u ON u.id = f.user_id
+               WHERE f.contest_id = ? ORDER BY f.updated_at DESC`,
+            )
+            .bind(contest.id)
+            .all<{ preferred: string; comment: string; who: string }>()
+        ).results
+      : [];
   const isBoard = contest.kind === 'leaderboard';
   const showVoting = !isBoard && (contest.phase === 'voting' || (contest.phase === 'draft' && manager));
   const isRollup = contest.kind === 'rollup';
@@ -298,10 +313,20 @@ member.get('/konkursy/:slug', async (c) => {
                     {feedback?.comment ?? ''}
                   </textarea>
                 </label>
+                {feedback && (
+                  <p class="flash ok small" style="margin:0">
+                    Twoja odpowiedź jest zapisana ({isMethod(feedback.preferred) ? METHODS[feedback.preferred].name : feedback.preferred}). Możesz ją zmienić do
+                    końca głosowania.
+                  </p>
+                )}
                 <button class="btn" type="submit" style="justify-self:start">
                   {feedback ? 'Zmień opinię' : 'Wyślij opinię'}
                 </button>
               </form>
+            )}
+
+            {manager && testMode && (contest.phase === 'voting' || allFeedback.length > 0) && (
+              <FeedbackSummary contest={contest} feedback={allFeedback} />
             )}
           </div>
         </section>
@@ -355,6 +380,58 @@ member.get('/konkursy/:slug', async (c) => {
     </Layout>,
   );
 });
+
+/** Podsumowanie ankiety o sposobach głosowania (tylko admin i opiekun konkursu) */
+const FeedbackSummary = ({ contest, feedback }: { contest: Contest; feedback: { preferred: string; comment: string; who: string }[] }) => {
+  const methods = [...new Set([...contest.methods, ...feedback.map((f) => f.preferred).filter(isMethod)])] as MethodId[];
+  const counts = methods.map((m) => ({ m, n: feedback.filter((f) => f.preferred === m).length })).sort((a, b) => b.n - a.n);
+  const max = Math.max(1, ...counts.map((c) => c.n));
+  const comments = feedback.filter((f) => f.comment.trim());
+  return (
+    <section class="card stack" style="margin-top:20px;--gap:14px" aria-labelledby="fb-sum">
+      <h2 id="fb-sum" style="margin:0">
+        Odpowiedzi członków ({feedback.length}) <span class="pill">widzi tylko admin i opiekun</span>
+      </h2>
+      {feedback.length === 0 ? (
+        <p class="empty-note">Nikt jeszcze nie odpowiedział.</p>
+      ) : (
+        <ol class="results">
+          {counts.map(({ m, n }) => (
+            <li>
+              <span class="place" aria-hidden="true">
+                {n}
+              </span>
+              <span class="name">
+                <span>{METHODS[m].name}</span>
+                <small>
+                  {n} {plural(n, 'osoba woli', 'osoby wolą', 'osób woli')} ten sposób
+                </small>
+              </span>
+              <span class="bar" aria-hidden="true">
+                <i style={`width:${Math.round((n / max) * 100)}%`}></i>
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+      {comments.length > 0 && (
+        <div>
+          <h3>Komentarze</h3>
+          <ul class="stack" style="--gap:8px;padding-left:1.2em;margin:0">
+            {comments.map((f) => (
+              <li>
+                <strong>{f.who}</strong> ({isMethod(f.preferred) ? METHODS[f.preferred].name : f.preferred}): „{f.comment}”
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <p class="small" style="margin:0">
+        <a href={`/admin/konkursy/${contest.id}`}>Porównanie z wynikami głosowania w panelu zarządzania</a>
+      </p>
+    </section>
+  );
+};
 
 const RollupSubmit = ({
   contest,
@@ -531,7 +608,14 @@ export const SubmissionCard = ({
           {reviewSlug && (
             <details class="more">
               <summary>Dodaj uwagi dla autora</summary>
-              <form class="form" method="post" action={`/konkursy/${reviewSlug}/zgloszenia/${e.id}/uwagi`} style="margin-top:12px">
+              <form
+                class="form"
+                method="post"
+                action={`/konkursy/${reviewSlug}/zgloszenia/${e.id}/uwagi`}
+                data-mail-preview={`/konkursy/${reviewSlug}/zgloszenia/${e.id}/uwagi/podglad`}
+                data-mail-preview-if="notify"
+                style="margin-top:12px"
+              >
                 <input type="hidden" name="back" value={idPrefix} />
                 <fieldset>
                   <legend>Ocena</legend>
@@ -748,27 +832,71 @@ member.post('/konkursy/:slug/goscie/:id/usun', async (c) => {
 const backTo = (slug: string, prefix: unknown, entryId: number) =>
   `/konkursy/${slug}#${prefix === 'entry' ? 'entry' : 'all-entry'}-${entryId}`;
 
-member.post('/konkursy/:slug/zgloszenia/:id/uwagi', async (c) => {
-  const user = c.var.user!;
+type ReviewEntry = { id: number; title: string; author_id: number | null; email: string | null; name: string | null; active: number | null };
+
+/** Konkurs i zgłoszenie dla uwag opiekuna (zapis i podgląd maila); null = nie ma, 'denied' = brak uprawnień */
+async function reviewTarget(c: Context<AppEnv>): Promise<{ contest: Contest; entry: ReviewEntry } | null | 'denied'> {
   const db = c.env.DB;
-  const contest = await getContest(db, c.req.param('slug'));
-  if (!contest || contest.kind !== 'rollup') return c.notFound();
-  if (!(await canManage(db, user, contest.id))) return c.text('Brak dostępu.', 403);
+  const contest = await getContest(db, c.req.param('slug') ?? '');
+  if (!contest || contest.kind !== 'rollup') return null;
+  if (!(await canManage(db, c.var.user!, contest.id))) return 'denied';
   const entry = await db
     .prepare(
       `SELECT e.id, e.title, e.author_id, u.email, u.name, u.active FROM entries e LEFT JOIN users u ON u.id = e.author_id
        WHERE e.id = ? AND e.contest_id = ?`,
     )
     .bind(Number(c.req.param('id')), contest.id)
-    .first<{ id: number; title: string; author_id: number | null; email: string | null; name: string | null; active: number | null }>();
-  if (!entry) return c.notFound();
+    .first<ReviewEntry>();
+  return entry ? { contest, entry } : null;
+}
+
+function reviewInput(f: Record<string, unknown>): { verdict: ReviewVerdict | null; comment: string; notify: boolean } {
+  return {
+    verdict: isReviewVerdict(f.verdict) ? f.verdict : null,
+    comment: String(f.comment ?? '')
+      .replace(/\r\n/g, '\n')
+      .trim()
+      .slice(0, 3000),
+    notify: Boolean(f.notify),
+  };
+}
+
+/** Mail z uwagami: ta sama funkcja dla wysyłki i podglądu. null = autor nie dostanie maila (brak konta, nieaktywny, sam sobie). */
+function reviewMessage(c: Context<AppEnv>, contest: Contest, entry: ReviewEntry, verdict: ReviewVerdict | null, comment: string) {
+  const user = c.var.user!;
+  if (!entry.email || !entry.active || entry.author_id === user.id) return null;
+  const link = `${new URL(c.req.url).origin}/konkursy/${contest.slug}#entry-${entry.id}`;
+  return { to: entry.email, toName: entry.name ?? undefined, ...reviewMail(entry.title, verdict ? REVIEW_VERDICTS[verdict].text : null, comment, user.name || user.email, link) };
+}
+
+member.post('/konkursy/:slug/zgloszenia/:id/uwagi/podglad', async (c) => {
+  const target = await reviewTarget(c);
+  if (target === 'denied') return c.json({ ok: false, error: 'Brak dostępu.' }, 403);
+  if (!target) return c.json({ ok: false, error: 'Nie ma takiego zgłoszenia.' }, 404);
+  const { verdict, comment, notify } = reviewInput(await c.req.parseBody());
+  const msg = notify && (comment || verdict) ? reviewMessage(c, target.contest, target.entry, verdict, comment) : null;
+  // bez maila (albo z błędem w formularzu): zwykły zapis, komunikat pokaże strona
+  if (!msg) return c.json({ ok: true, skip: true });
+  return c.json({
+    ok: true,
+    to: msg.toName ? `${msg.toName} <${msg.to}>` : msg.to,
+    subject: msg.subject,
+    html: msg.html,
+    note: 'Tak będzie wyglądał mail do autora. Uwagi zapiszą się też przy projekcie.',
+    okLabel: 'Zapisz i wyślij maila',
+  });
+});
+
+member.post('/konkursy/:slug/zgloszenia/:id/uwagi', async (c) => {
+  const user = c.var.user!;
+  const db = c.env.DB;
+  const target = await reviewTarget(c);
+  if (target === 'denied') return c.text('Brak dostępu.', 403);
+  if (!target) return c.notFound();
+  const { contest, entry } = target;
   const f = await c.req.parseBody();
   const back = backTo(contest.slug, f.back, entry.id);
-  const verdict = isReviewVerdict(f.verdict) ? f.verdict : null;
-  const comment = String(f.comment ?? '')
-    .replace(/\r\n/g, '\n')
-    .trim()
-    .slice(0, 3000);
+  const { verdict, comment, notify } = reviewInput(f);
   if (!comment && !verdict) {
     setFlash(c, 'err', 'Wpisz uwagi albo wybierz ocenę.');
     return c.redirect(back);
@@ -780,11 +908,9 @@ member.post('/konkursy/:slug/zgloszenia/:id/uwagi', async (c) => {
 
   let note = '';
   let mailFailed = false;
-  const toAuthor = f.notify && entry.email && entry.active && entry.author_id !== user.id;
-  if (toAuthor) {
-    const link = `${new URL(c.req.url).origin}/konkursy/${contest.slug}#entry-${entry.id}`;
-    const msg = reviewMail(entry.title, verdict ? REVIEW_VERDICTS[verdict].text : null, comment, user.name || user.email, link);
-    const r = await sendMail(c.env, { to: entry.email!, toName: entry.name ?? undefined, ...msg });
+  const msg = notify ? reviewMessage(c, contest, entry, verdict, comment) : null;
+  if (msg) {
+    const r = await sendMail(c.env, msg);
     if (r.sent) {
       await db.prepare('UPDATE entry_reviews SET mailed = 1 WHERE id = ?').bind(meta.last_row_id).run();
       note = ' Autor dostał maila.';
