@@ -101,8 +101,11 @@ odkomentuj `r2_buckets` w `wrangler.jsonc` i zrób deploy. Nowe pliki trafią do
 
 ### Własna domena
 
-W panelu Cloudflare: Workers → toastmasters-czestochowa → Settings → Domains & Routes → Add custom domain.
-Linki w mailach budują się z adresu, pod którym działa strona, więc nic więcej nie trzeba zmieniać.
+Strona działa pod `https://toastmasters.pro` (strefa DNS w Cloudflare, domena zarejestrowana w OVH,
+serwery nazw `ruth`/`theo.ns.cloudflare.com`). W `wrangler.jsonc` są `routes` z `custom_domain: true`
+dla `toastmasters.pro` i `www.toastmasters.pro`, a Cloudflare sam tworzy rekordy DNS i certyfikat.
+`www.*` oraz stary adres `*.workers.dev` przekierowują na `CANONICAL_HOST` z zachowaniem ścieżki,
+więc wcześniej wysłane linki z tokenami nadal działają. Linki w mailach budują się z adresu żądania.
 
 ## Uwaga z brand manuala
 

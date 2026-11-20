@@ -29,11 +29,16 @@ app.use(
     referrerPolicy: 'same-origin',
   }),
 );
-// www.toastmasters.pro → toastmasters.pro (jeden adres = jedna sesja i spójne linki w mailach)
+// www.* i *.workers.dev → CANONICAL_HOST (jeden adres = jedna sesja i spójne linki w mailach).
+// Tylko GET/HEAD — formularz wysłany z otwartej starej karty nadal zadziała.
 app.use('*', async (c, next) => {
   const url = new URL(c.req.url);
-  if (url.hostname.startsWith('www.')) {
-    url.hostname = url.hostname.slice(4);
+  const canonical = c.env.CANONICAL_HOST;
+  const offHost = url.hostname.startsWith('www.') || (canonical && url.hostname.endsWith('.workers.dev'));
+  if (offHost && ['GET', 'HEAD'].includes(c.req.method)) {
+    url.hostname = url.hostname.startsWith('www.') && !canonical ? url.hostname.slice(4) : canonical!;
+    url.protocol = 'https:';
+    url.port = '';
     return c.redirect(url.toString(), 301);
   }
   await next();

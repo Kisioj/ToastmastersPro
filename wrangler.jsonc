@@ -12,11 +12,13 @@
 
   // Własna domena (strefa w Cloudflare). Rekordy DNS i certyfikaty SSL tworzy Cloudflare przy deployu.
   // Adres *.workers.dev nadal działa — linki wysłane wcześniej się nie psują.
-  // TODO: odkomentować po aktywacji strefy toastmasters.pro w Cloudflare
-  // "routes": [
-  //   { "pattern": "toastmasters.pro", "custom_domain": true },
-  //   { "pattern": "www.toastmasters.pro", "custom_domain": true }
-  // ],
+  "routes": [
+    { "pattern": "toastmasters.pro", "custom_domain": true },
+    { "pattern": "www.toastmasters.pro", "custom_domain": true }
+  ],
+  // workers.dev zostaje włączony, ale przekierowuje na CANONICAL_HOST (stare linki z tokenami dalej działają)
+  "workers_dev": true,
+  "preview_urls": false,
 
   "d1_databases": [
     {
@@ -36,6 +38,7 @@
   "ai": { "binding": "AI" },
 
   "vars": {
+    "CANONICAL_HOST": "toastmasters.pro",
     "SMTP_HOST": "smtp.gmail.com",
     "SMTP_PORT": "465",
     "SMTP_USER": "toastmastersczwa@gmail.com",

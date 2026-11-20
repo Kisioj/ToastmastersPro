@@ -8,6 +8,8 @@ export interface Env {
   FILES_KV?: KVNamespace;
   AI?: Ai;
 
+  /** docelowa domena — www.* i *.workers.dev przekierowują tutaj */
+  CANONICAL_HOST?: string;
   SMTP_HOST?: string;
   SMTP_PORT?: string;
   SMTP_USER?: string;
