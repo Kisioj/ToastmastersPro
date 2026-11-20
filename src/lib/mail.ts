@@ -33,20 +33,22 @@ export async function mailsSentLast24h(env: Env): Promise<number> {
   return row?.n ?? 0;
 }
 
+/** Jedno zapytanie zbiorcze (darmowy plan Workers: maks. 50 podżądań na żądanie, D1 też się wlicza) */
 export async function mailAllowed(env: Env, to: string): Promise<{ ok: true } | { ok: false; reason: string; retryIn?: number }> {
   const email = to.trim().toLowerCase();
   const t = now();
-  const [member, last] = await env.DB.batch<{ v: number | null }>([
-    env.DB.prepare('SELECT 1 AS v FROM users WHERE email = ? AND active = 1'),
-    env.DB.prepare("SELECT MAX(created_at) AS v FROM mail_log WHERE to_email = ? AND status IN ('sent', 'error')"),
-  ].map((s) => s.bind(email)));
+  const [member, last, day] = await env.DB.batch<{ v: number | null }>([
+    env.DB.prepare('SELECT 1 AS v FROM users WHERE email = ? AND active = 1').bind(email),
+    env.DB.prepare("SELECT MAX(created_at) AS v FROM mail_log WHERE to_email = ? AND status IN ('sent', 'error')").bind(email),
+    env.DB.prepare("SELECT COUNT(*) AS v FROM mail_log WHERE status = 'sent' AND created_at > ?").bind(t - 86400),
+  ]);
   if (!member.results.length) return { ok: false, reason: 'Ten adres nie jest na liście aktywnych członków.' };
   const lastAt = last.results[0]?.v ?? 0;
   if (lastAt && t - lastAt < MAIL_COOLDOWN) {
     const retryIn = MAIL_COOLDOWN - (t - lastAt);
     return { ok: false, reason: `Na ten adres wysłaliśmy maila przed chwilą — kolejny możliwy za ${Math.ceil(retryIn / 60)} min.`, retryIn };
   }
-  if ((await mailsSentLast24h(env)) >= mailDailyLimit(env))
+  if ((day.results[0]?.v ?? 0) >= mailDailyLimit(env))
     return { ok: false, reason: `Osiągnięto dzienny limit ${mailDailyLimit(env)} maili — spróbuj jutro.` };
   return { ok: true };
 }
@@ -54,9 +56,12 @@ export async function mailAllowed(env: Env, to: string): Promise<{ ok: true } | 
 export async function sendMail(
   env: Env,
   msg: { to: string; toName?: string; subject: string; text: string; html: string },
+  opts: { alreadyChecked?: boolean } = {},
 ): Promise<MailResult> {
-  const allowed = await mailAllowed(env, msg.to);
-  if (!allowed.ok) return { sent: false, mode: 'blocked', error: allowed.reason, retryIn: allowed.retryIn };
+  if (!opts.alreadyChecked) {
+    const allowed = await mailAllowed(env, msg.to);
+    if (!allowed.ok) return { sent: false, mode: 'blocked', error: allowed.reason, retryIn: allowed.retryIn };
+  }
   let result: MailResult;
   if (!mailConfigured(env)) {
     console.log(`[MAIL wyłączony] Do: ${msg.to}\nTemat: ${msg.subject}\n\n${msg.text}`);

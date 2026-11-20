@@ -99,7 +99,7 @@ auth.post('/logowanie/link', async (c) => {
   if (user && (await mailAllowed(c.env, user.email)).ok) {
     const token = await createToken(db, user.id, 'login');
     const link = linkFor(c, 'login', token);
-    const res = await sendMail(c.env, { to: user.email, toName: user.name, ...loginMail(link) });
+    const res = await sendMail(c.env, { to: user.email, toName: user.name, ...loginMail(link) }, { alreadyChecked: true });
     mailOff = res.mode === 'off';
     if (mailOff && isLocal(c)) devLink = link;
   }

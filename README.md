@@ -73,7 +73,7 @@ nawet na 24 h, także ręczną korespondencję klubu):
 - maile idą wyłącznie do aktywnych osób z listy członków,
 - maks. 1 mail na 5 minut na adres (link do logowania lub zaproszenie),
 - maks. `MAIL_DAILY_LIMIT` maili na dobę z całej aplikacji (domyślnie 300),
-- zaproszenia hurtowe po 15 naraz (limit połączeń na darmowym planie Workers).
+- zaproszenia hurtowe po 8 naraz (darmowy plan Workers: maks. 50 podżądań na żądanie, D1 i SMTP też się liczą).
 
 ### Import listy członków
 

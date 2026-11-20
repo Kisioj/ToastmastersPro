@@ -15,6 +15,9 @@ import { SubmissionCard } from './member';
 
 export const admin = new Hono<AppEnv>();
 
+/** ok. 5 podżądań na zaproszenie (sprawdzenie limitów, token, SMTP, log, znacznik) — 8 × 5 + reszta < 50 */
+const INVITE_BATCH = 8;
+
 admin.use('*', async (c, next) => {
   if (c.var.user?.role !== 'admin') return c.text('Brak dostępu', 403);
   await next();
@@ -34,7 +37,7 @@ async function sendInvite(c: Context<AppEnv>, u: User) {
   if (!allowed.ok) return { link: null, sent: false, mode: 'blocked' as const, error: allowed.reason };
   const token = await createToken(c.env.DB, u.id, 'set_password');
   const link = linkFor(c, 'set_password', token);
-  const res = await sendMail(c.env, { to: u.email, toName: u.name, ...inviteMail(u.name.split(' ')[0] ?? '', link) });
+  const res = await sendMail(c.env, { to: u.email, toName: u.name, ...inviteMail(u.name.split(' ')[0] ?? '', link) }, { alreadyChecked: true });
   await c.env.DB.prepare('UPDATE users SET invited_at = ? WHERE id = ?').bind(now(), u.id).run();
   return { link, ...res };
 }
@@ -164,7 +167,21 @@ admin.get('/', async (c) => {
           </div>
 
           <div>
-            <h2>Członkowie ({users.filter((u) => u.active).length})</h2>
+            <div class="row" style="margin-bottom:12px">
+              <h2 style="margin:0">Członkowie ({users.filter((u) => u.active).length})</h2>
+              <span class="spacer"></span>
+              {mailOn && users.some((u) => u.active && !u.invited_at && !u.password_hash) && (
+                <form
+                  method="post"
+                  action="/admin/czlonkowie/zaproszenia"
+                  data-confirm={`Wysłać zaproszenia do ${users.filter((u) => u.active && !u.invited_at && !u.password_hash).length} osób, które jeszcze ich nie dostały? (po 8 naraz)`}
+                >
+                  <button class="btn" type="submit">
+                    Wyślij zaproszenia niezaproszonym ({users.filter((u) => u.active && !u.invited_at && !u.password_hash).length})
+                  </button>
+                </form>
+              )}
+            </div>
             <form class="form card" method="post" action="/admin/czlonkowie/podglad" style="margin-bottom:20px">
               <label for="members">
                 Dodaj osoby albo wklej całą listę członków
@@ -304,7 +321,7 @@ admin.post('/czlonkowie/podglad', async (c) => {
               <input type="checkbox" name="invite" value="1" checked={mailOn} disabled={!mailOn} />
               <span>
                 Wyślij nowym osobom zaproszenie z linkiem do ustawienia hasła
-                {mailOn ? ' (maks. 15 naraz — resztę wyślesz przyciskami w tabeli)' : ' — maile są wyłączone, linki skopiujesz z tabeli'}
+                {mailOn ? ' (maks. 6 od razu — resztę jednym przyciskiem nad tabelą)' : ' — maile są wyłączone, linki skopiujesz z tabeli'}
               </span>
             </label>
             {missing.length > 0 && (
@@ -339,22 +356,21 @@ admin.post('/czlonkowie', async (c) => {
     return c.redirect('/admin');
   }
   const db = c.env.DB;
-  let added = 0;
-  const fresh: User[] = [];
-  for (const p of people) {
-    const row = await db
-      .prepare(
-        `INSERT INTO users (email, name, created_at) VALUES (?, ?, ?)
-         ON CONFLICT(email) DO UPDATE SET name = CASE WHEN excluded.name != '' THEN excluded.name ELSE users.name END, active = 1
-         RETURNING *, (created_at = ?) AS is_new`,
-      )
-      .bind(p.email, p.name, now(), now())
-      .first<User & { is_new: number }>();
-    if (row?.is_new) {
-      added++;
-      fresh.push(row);
-    }
-  }
+  // jeden batch = jedno podżądanie, niezależnie od długości listy
+  const t = now();
+  const upserted = await db.batch<User & { is_new: number }>(
+    people.map((p) =>
+      db
+        .prepare(
+          `INSERT INTO users (email, name, created_at) VALUES (?, ?, ?)
+           ON CONFLICT(email) DO UPDATE SET name = CASE WHEN excluded.name != '' THEN excluded.name ELSE users.name END, active = 1
+           RETURNING *, (created_at = ?) AS is_new`,
+        )
+        .bind(p.email, p.name, t, t),
+    ),
+  );
+  const fresh = upserted.map((r) => r.results[0]).filter((u): u is User & { is_new: number } => Boolean(u?.is_new));
+  const added = fresh.length;
   // „tylko te maile”: dezaktywuj osoby spoza listy (bez adminów)
   let deactivated = 0;
   if (f.sync) {
@@ -370,8 +386,8 @@ admin.post('/czlonkowie', async (c) => {
   let failed = 0;
   let blocked = 0;
   if (f.invite && mailConfigured(c.env)) {
-    // limit podżądań na darmowym planie — wysyłamy max 15 naraz
-    for (const u of fresh.slice(0, 15)) {
+    // limit podżądań na darmowym planie — w imporcie max 6 zaproszeń, resztę wysyła przycisk „niezaproszonym”
+    for (const u of fresh.slice(0, 6)) {
       const r = await sendInvite(c, u);
       if (r.sent) sent++;
       else if (r.mode === 'blocked') blocked++;
@@ -384,8 +400,32 @@ admin.post('/czlonkowie', async (c) => {
   if (sent) parts.push(`wysłano ${sent} ${plural(sent, 'zaproszenie', 'zaproszenia', 'zaproszeń')}`);
   if (blocked) parts.push(`${blocked} zaproszeń wstrzymał limit wysyłki`);
   if (failed) parts.push(`${failed} maili nie wyszło — sprawdź ustawienia SMTP`);
-  if (fresh.length > 15 && f.invite) parts.push('resztę zaproszeń wyślij przyciskami w tabeli');
+  if (fresh.length > 6 && f.invite) parts.push('resztę zaproszeń wyślij przyciskiem „Wyślij zaproszenia niezaproszonym”');
   setFlash(c, failed ? 'err' : 'ok', `${parts.join(', ')}.`);
+  return c.redirect('/admin');
+});
+
+/** Zaproszenia dla aktywnych osób bez zaproszenia i bez hasła — po 8 naraz (ok. 5 podżądań na zaproszenie, limit 50) */
+admin.post('/czlonkowie/zaproszenia', async (c) => {
+  if (!mailConfigured(c.env)) {
+    setFlash(c, 'err', 'Wysyłka maili jest wyłączona.');
+    return c.redirect('/admin');
+  }
+  const { results: todo } = await c.env.DB.prepare(
+    'SELECT * FROM users WHERE active = 1 AND invited_at IS NULL AND password_hash IS NULL ORDER BY name, email',
+  ).all<User>();
+  let sent = 0;
+  const problems: string[] = [];
+  for (const u of todo.slice(0, INVITE_BATCH)) {
+    const r = await sendInvite(c, u);
+    if (r.sent) sent++;
+    else problems.push(`${u.name || u.email}: ${r.error ?? 'nie wysłano'}`);
+  }
+  const left = todo.length - sent;
+  const msg = [`Wysłano ${sent} ${plural(sent, 'zaproszenie', 'zaproszenia', 'zaproszeń')}`];
+  if (left > 0) msg.push(`zostało ${left} — kliknij przycisk jeszcze raz`);
+  if (problems.length) msg.push(`problemy: ${problems.slice(0, 3).join('; ')}`);
+  setFlash(c, problems.length ? 'err' : 'ok', `${msg.join(', ')}.`);
   return c.redirect('/admin');
 });
 
