@@ -1,9 +1,9 @@
 import { Hono } from 'hono';
-import type { Context } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv, Contest, ContestSettings, EntryRow, User } from '../env';
 import { aiProvider } from '../lib/ai';
 import { createToken, linkFor } from '../lib/auth';
-import { computeTallies, getContest, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS } from '../lib/contests';
+import { canManage, computeTallies, getContest, listContests, listEntries, PHASES, RESULTS_MODES, ROLLUP_DEFAULTS } from '../lib/contests';
 import { setFlash, takeFlash } from '../lib/flash';
 import { inviteMail, mailAllowed, mailConfigured, mailDailyLimit, mailsSentLast24h, sendMail } from '../lib/mail';
 import { parseMemberLines } from '../lib/members';
@@ -18,10 +18,17 @@ export const admin = new Hono<AppEnv>();
 /** ok. 5 podżądań na zaproszenie (sprawdzenie limitów, token, SMTP, log, znacznik) — 8 × 5 + reszta < 50 */
 const INVITE_BATCH = 8;
 
-admin.use('*', async (c, next) => {
-  if (c.var.user?.role !== 'admin') return c.text('Brak dostępu', 403);
+/** Tylko admin systemu: członkowie, maile, tworzenie i usuwanie konkursów, przydzielanie opiekunów */
+const requireAdmin: MiddlewareHandler<AppEnv> = async (c, next) => {
+  if (c.var.user?.role !== 'admin') return c.text('Brak dostępu — to tylko dla admina systemu.', 403);
   await next();
-});
+};
+
+/** Admin systemu albo opiekun tego konkursu */
+async function guardContest(c: Context<AppEnv>, contestId: number): Promise<Response | null> {
+  if (!Number.isInteger(contestId) || !(await canManage(c.env.DB, c.var.user!, contestId))) return c.text('Brak dostępu do tego konkursu.', 403);
+  return null;
+}
 
 function memberStatus(u: User): { cls: string; text: string } {
   if (!u.active) return { cls: 'closed', text: 'Nieaktywny' };
@@ -42,7 +49,7 @@ async function sendInvite(c: Context<AppEnv>, u: User) {
   return { link, ...res };
 }
 
-admin.get('/', async (c) => {
+admin.get('/', requireAdmin, async (c) => {
   const db = c.env.DB;
   const { results: users } = await db.prepare('SELECT * FROM users ORDER BY active DESC, role, name, email').all<User>();
   const contests = await listContests(db, true);
@@ -267,7 +274,7 @@ admin.get('/', async (c) => {
 });
 
 /** Podgląd importu: kto zostanie dodany, kto już jest, kogo nie ma na liście */
-admin.post('/czlonkowie/podglad', async (c) => {
+admin.post('/czlonkowie/podglad', requireAdmin, async (c) => {
   const f = await c.req.parseBody();
   const people = parseMemberLines(String(f.members ?? ''));
   if (!people.length) {
@@ -348,7 +355,7 @@ admin.post('/czlonkowie/podglad', async (c) => {
   );
 });
 
-admin.post('/czlonkowie', async (c) => {
+admin.post('/czlonkowie', requireAdmin, async (c) => {
   const f = await c.req.parseBody();
   const people = parseMemberLines(String(f.members ?? ''));
   if (!people.length) {
@@ -406,7 +413,7 @@ admin.post('/czlonkowie', async (c) => {
 });
 
 /** Zaproszenia dla aktywnych osób bez zaproszenia i bez hasła — po 8 naraz (ok. 5 podżądań na zaproszenie, limit 50) */
-admin.post('/czlonkowie/zaproszenia', async (c) => {
+admin.post('/czlonkowie/zaproszenia', requireAdmin, async (c) => {
   if (!mailConfigured(c.env)) {
     setFlash(c, 'err', 'Wysyłka maili jest wyłączona.');
     return c.redirect('/admin');
@@ -429,7 +436,7 @@ admin.post('/czlonkowie/zaproszenia', async (c) => {
   return c.redirect('/admin');
 });
 
-admin.post('/czlonkowie/:id/zaproszenie', async (c) => {
+admin.post('/czlonkowie/:id/zaproszenie', requireAdmin, async (c) => {
   const u = await c.env.DB.prepare('SELECT * FROM users WHERE id = ? AND active = 1').bind(Number(c.req.param('id'))).first<User>();
   if (!u) return c.json({ ok: false, error: 'Nie ma takiej osoby.' }, 404);
   const r = await sendInvite(c, u);
@@ -437,7 +444,7 @@ admin.post('/czlonkowie/:id/zaproszenie', async (c) => {
   return c.json({ ok: true, link: r.link, sent: r.sent, mode: r.mode, error: r.error ?? null });
 });
 
-admin.post('/czlonkowie/:id', async (c) => {
+admin.post('/czlonkowie/:id', requireAdmin, async (c) => {
   const id = Number(c.req.param('id'));
   const f = await c.req.parseBody();
   const action = String(f.action ?? '');
@@ -454,7 +461,7 @@ admin.post('/czlonkowie/:id', async (c) => {
   return c.redirect('/admin');
 });
 
-admin.post('/mail-test', async (c) => {
+admin.post('/mail-test', requireAdmin, async (c) => {
   const u = c.var.user!;
   const r = await sendMail(c.env, {
     to: u.email,
@@ -582,7 +589,7 @@ function readContestForm(f: Record<string, string | File | (string | File)[]>) {
   };
 }
 
-admin.get('/konkursy/nowy', (c) =>
+admin.get('/konkursy/nowy', requireAdmin, (c) =>
   c.html(
     <Layout title="Nowy konkurs" user={c.var.user} flash={takeFlash(c)} nav="admin">
       <PageHead eyebrow="Panel admina" title="Nowy konkurs" />
@@ -595,7 +602,7 @@ admin.get('/konkursy/nowy', (c) =>
   ),
 );
 
-admin.post('/konkursy', async (c) => {
+admin.post('/konkursy', requireAdmin, async (c) => {
   const v = readContestForm(await c.req.parseBody({ all: true }));
   if (!v.title) {
     setFlash(c, 'err', 'Podaj tytuł.');
@@ -620,6 +627,16 @@ admin.get('/konkursy/:id', async (c) => {
   const db = c.env.DB;
   const contest = await getContest(db, Number(c.req.param('id')));
   if (!contest) return c.notFound();
+  const denied = await guardContest(c, contest.id);
+  if (denied) return denied;
+  const isAdmin = c.var.user!.role === 'admin';
+  const { results: managers } = await db
+    .prepare('SELECT u.id, u.name, u.email FROM contest_managers m JOIN users u ON u.id = m.user_id WHERE m.contest_id = ? ORDER BY u.name, u.email')
+    .bind(contest.id)
+    .all<{ id: number; name: string; email: string }>();
+  const { results: candidates } = isAdmin
+    ? await db.prepare("SELECT id, name, email FROM users WHERE active = 1 AND role != 'admin' ORDER BY name, email").all<{ id: number; name: string; email: string }>()
+    : { results: [] as { id: number; name: string; email: string }[] };
   const entries = await listEntries(db, contest.id, true);
   const visible = entries.filter((e) => !e.hidden);
   const { results: methodsWithVotes } = await db
@@ -650,8 +667,8 @@ admin.get('/konkursy/:id', async (c) => {
       : { results: [] as EntryRow[] };
 
   return c.html(
-    <Layout title={contest.title} user={c.var.user} flash={takeFlash(c)} scripts={['/js/app.js']} nav="admin">
-      <PageHead eyebrow="Panel admina · konkurs" title={contest.title}>
+    <Layout title={contest.title} user={c.var.user} flash={takeFlash(c)} scripts={['/js/app.js']} nav={isAdmin ? 'admin' : 'home'}>
+      <PageHead eyebrow={isAdmin ? 'Panel admina · konkurs' : 'Zarządzanie konkursem'} title={contest.title}>
         <p class="row" style="margin:12px 0 0">
           <PhasePill phase={contest.phase} />
           <a class="btn ghost small" href={`/konkursy/${contest.slug}`}>
@@ -811,6 +828,55 @@ admin.get('/konkursy/:id', async (c) => {
             )}
           </div>
 
+          <div class="card">
+            <h2>Opiekunowie konkursu</h2>
+            <p class="muted">
+              Opiekun zarządza tylko tym konkursem: ustawienia i etap, propozycje, zgłoszenia z autorami, wyniki i zerowanie głosów. Nie widzi listy
+              członków ani innych konkursów.
+            </p>
+            {managers.length === 0 ? (
+              <p class="empty-note">Brak opiekunów — konkursem zarządza tylko admin systemu.</p>
+            ) : (
+              <ul class="stack" style="--gap:8px;padding:0;list-style:none;margin:0 0 12px">
+                {managers.map((m) => (
+                  <li class="row">
+                    <span>
+                      <strong>{m.name || m.email}</strong> <span class="muted small">{m.email}</span>
+                    </span>
+                    {isAdmin && (
+                      <form method="post" action={`/admin/konkursy/${contest.id}/opiekunowie`} class="inline-form">
+                        <input type="hidden" name="action" value="remove" />
+                        <input type="hidden" name="user_id" value={String(m.id)} />
+                        <button class="btn danger small" type="submit">
+                          Odbierz
+                        </button>
+                      </form>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {isAdmin && candidates.length > 0 && (
+              <form method="post" action={`/admin/konkursy/${contest.id}/opiekunowie`} class="row" style="gap:8px">
+                <input type="hidden" name="action" value="add" />
+                <label class="visually-hidden" for="new-manager">
+                  Osoba
+                </label>
+                <select id="new-manager" name="user_id" required style="min-block-size:40px;border-radius:8px;font:inherit;padding:4px 8px;max-width:100%">
+                  <option value="">— wybierz osobę —</option>
+                  {candidates
+                    .filter((u) => !managers.some((m) => m.id === u.id))
+                    .map((u) => (
+                      <option value={String(u.id)}>{u.name ? `${u.name} (${u.email})` : u.email}</option>
+                    ))}
+                </select>
+                <button class="btn small" type="submit">
+                  Dodaj opiekuna
+                </button>
+              </form>
+            )}
+          </div>
+
           <div>
             <h2>Ustawienia</h2>
             <ContestForm contest={contest} action={`/admin/konkursy/${contest.id}`} />
@@ -833,11 +899,13 @@ admin.get('/konkursy/:id', async (c) => {
                   Wyzeruj
                 </button>
               </form>
-              <form method="post" action={`/admin/konkursy/${contest.id}/usun`} data-confirm="Usunąć cały konkurs razem z propozycjami, plikami i głosami?">
-                <button class="btn danger small" type="submit">
-                  Usuń konkurs
-                </button>
-              </form>
+              {isAdmin && (
+                <form method="post" action={`/admin/konkursy/${contest.id}/usun`} data-confirm="Usunąć cały konkurs razem z propozycjami, plikami i głosami?">
+                  <button class="btn danger small" type="submit">
+                    Usuń konkurs
+                  </button>
+                </form>
+              )}
             </div>
           </div>
         </div>
@@ -859,6 +927,8 @@ admin.get('/konkursy/:id', async (c) => {
 
 admin.post('/konkursy/:id', async (c) => {
   const id = Number(c.req.param('id'));
+  const denied = await guardContest(c, id);
+  if (denied) return denied;
   const v = readContestForm(await c.req.parseBody({ all: true }));
   if (!v.title) {
     setFlash(c, 'err', 'Podaj tytuł.');
@@ -879,6 +949,8 @@ admin.post('/konkursy/:id', async (c) => {
 
 admin.post('/konkursy/:id/propozycje', async (c) => {
   const id = Number(c.req.param('id'));
+  const denied = await guardContest(c, id);
+  if (denied) return denied;
   const f = await c.req.parseBody();
   const lines = String(f.entries ?? '')
     .split(/\r?\n/)
@@ -901,6 +973,8 @@ admin.post('/propozycje/:id', async (c) => {
   const db = c.env.DB;
   const e = await db.prepare('SELECT * FROM entries WHERE id = ?').bind(Number(c.req.param('id'))).first<EntryRow>();
   if (!e) return c.notFound();
+  const denied = await guardContest(c, e.contest_id);
+  if (denied) return denied;
   const f = await c.req.parseBody();
   const action = String(f.action ?? '');
   if (action === 'rename') {
@@ -919,6 +993,8 @@ admin.post('/propozycje/:id', async (c) => {
 
 admin.post('/konkursy/:id/reset', async (c) => {
   const id = Number(c.req.param('id'));
+  const denied = await guardContest(c, id);
+  if (denied) return denied;
   const f = await c.req.parseBody();
   const method = String(f.method ?? '');
   const db = c.env.DB;
@@ -934,7 +1010,27 @@ admin.post('/konkursy/:id/reset', async (c) => {
   return c.redirect(`/admin/konkursy/${id}`);
 });
 
-admin.post('/konkursy/:id/usun', async (c) => {
+admin.post('/konkursy/:id/opiekunowie', requireAdmin, async (c) => {
+  const id = Number(c.req.param('id'));
+  const f = await c.req.parseBody();
+  const userId = Number(f.user_id);
+  const db = c.env.DB;
+  const u = await db.prepare('SELECT * FROM users WHERE id = ? AND active = 1').bind(userId).first<User>();
+  if (!u || !(await getContest(db, id))) {
+    setFlash(c, 'err', 'Nie ma takiej osoby albo konkursu.');
+    return c.redirect(`/admin/konkursy/${id}`);
+  }
+  if (String(f.action) === 'remove') {
+    await db.prepare('DELETE FROM contest_managers WHERE contest_id = ? AND user_id = ?').bind(id, userId).run();
+    setFlash(c, 'ok', `${u.name || u.email} nie jest już opiekunem tego konkursu.`);
+  } else {
+    await db.prepare('INSERT OR IGNORE INTO contest_managers (contest_id, user_id, created_at) VALUES (?, ?, ?)').bind(id, userId, now()).run();
+    setFlash(c, 'ok', `${u.name || u.email} jest teraz opiekunem tego konkursu.`);
+  }
+  return c.redirect(`/admin/konkursy/${id}`);
+});
+
+admin.post('/konkursy/:id/usun', requireAdmin, async (c) => {
   const id = Number(c.req.param('id'));
   const db = c.env.DB;
   const store = getStore(c.env);

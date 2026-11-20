@@ -85,9 +85,21 @@ export async function computeTallies(db: D1Database, contest: Contest, methods: 
   return out;
 }
 
-/** Czy użytkownik może zobaczyć wyniki danej metody */
-export function canSeeResults(contest: Contest, user: User, votedInMethod: boolean): boolean {
+/** Admin systemu zarządza wszystkim; opiekun — tylko przypisanymi konkursami */
+export async function canManage(db: D1Database, user: User, contestId: number): Promise<boolean> {
   if (user.role === 'admin') return true;
+  const row = await db.prepare('SELECT 1 AS ok FROM contest_managers WHERE contest_id = ? AND user_id = ?').bind(contestId, user.id).first();
+  return Boolean(row);
+}
+
+export async function managedContestIds(db: D1Database, userId: number): Promise<Set<number>> {
+  const { results } = await db.prepare('SELECT contest_id FROM contest_managers WHERE user_id = ?').bind(userId).all<{ contest_id: number }>();
+  return new Set(results.map((r) => r.contest_id));
+}
+
+/** Czy użytkownik może zobaczyć wyniki danej metody (admin i opiekun konkursu — zawsze) */
+export function canSeeResults(contest: Contest, user: User, votedInMethod: boolean, manager = false): boolean {
+  if (user.role === 'admin' || manager) return true;
   if (contest.results === 'after_vote') return votedInMethod || contest.phase === 'closed';
   if (contest.results === 'closed') return contest.phase === 'closed';
   return false;

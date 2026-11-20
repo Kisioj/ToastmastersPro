@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import type { AppEnv, Contest, EntryRow, User } from '../env';
 import { reviewDesign, takeAiQuota } from '../lib/ai';
-import { canSeeResults, computeTally, getContest, listEntries, ROLLUP_DEFAULTS } from '../lib/contests';
+import { canManage, canSeeResults, computeTally, getContest, listEntries, ROLLUP_DEFAULTS } from '../lib/contests';
 import { setFlash } from '../lib/flash';
 import { CHUNK_SIZE, concatParts, deleteParts, getStore } from '../lib/storage';
 import { b64, now, randomToken, safeJson } from '../lib/util';
@@ -25,16 +25,21 @@ async function readJson<T>(c: Context, maxBytes = 64 * 1024): Promise<T | null> 
   }
 }
 
-function votingOpen(contest: Contest, user: User): boolean {
-  return contest.phase === 'voting' || (contest.phase === 'draft' && user.role === 'admin');
+type ManagedContest = Contest & { manager: boolean };
+
+/** Szkic jest otwarty do głosowania (podglądu) tylko dla admina i opiekuna konkursu */
+function votingOpen(contest: ManagedContest): boolean {
+  return contest.phase === 'voting' || (contest.phase === 'draft' && contest.manager);
 }
 
-async function contestFor(c: Context<AppEnv>): Promise<Contest | null> {
+async function contestFor(c: Context<AppEnv>): Promise<ManagedContest | null> {
   const id = Number(c.req.param('id'));
   if (!Number.isInteger(id)) return null;
   const contest = await getContest(c.env.DB, id);
-  if (!contest || (contest.phase === 'draft' && c.var.user!.role !== 'admin')) return null;
-  return contest;
+  if (!contest) return null;
+  const manager = await canManage(c.env.DB, c.var.user!, contest.id);
+  if (contest.phase === 'draft' && !manager) return null;
+  return { ...contest, manager };
 }
 
 // ——— głosowanie ———
@@ -43,7 +48,7 @@ api.post('/api/konkursy/:id/glos', async (c) => {
   const user = c.var.user!;
   const contest = await contestFor(c);
   if (!contest) return err(c, 'Nie ma takiego konkursu.', 404);
-  if (!votingOpen(contest, user)) return err(c, 'Głosowanie jest zamknięte.', 409);
+  if (!votingOpen(contest)) return err(c, 'Głosowanie jest zamknięte.', 409);
   const body = await readJson<{ method?: string; data?: unknown }>(c);
   if (!body || !isMethod(body.method) || !contest.methods.includes(body.method) || body.method === 'duel')
     return err(c, 'Nieprawidłowy sposób głosowania.');
@@ -56,7 +61,7 @@ api.post('/api/konkursy/:id/glos', async (c) => {
   )
     .bind(contest.id, user.id, body.method, JSON.stringify(v.data), now())
     .run();
-  const results = canSeeResults(contest, user, true) ? await computeTally(c.env.DB, contest, body.method, entries) : null;
+  const results = canSeeResults(contest, user, true, contest.manager) ? await computeTally(c.env.DB, contest, body.method, entries) : null;
   return c.json({ ok: true, data: v.data, results });
 });
 
@@ -64,7 +69,7 @@ api.post('/api/konkursy/:id/pojedynek', async (c) => {
   const user = c.var.user!;
   const contest = await contestFor(c);
   if (!contest) return err(c, 'Nie ma takiego konkursu.', 404);
-  if (!votingOpen(contest, user) || !contest.methods.includes('duel')) return err(c, 'Pojedynki są wyłączone.', 409);
+  if (!votingOpen(contest) || !contest.methods.includes('duel')) return err(c, 'Pojedynki są wyłączone.', 409);
   const body = await readJson<{ winner?: number; loser?: number }>(c);
   const entries = await listEntries(c.env.DB, contest.id);
   const ids = new Set(entries.map((e) => e.id));
@@ -79,7 +84,7 @@ api.post('/api/konkursy/:id/pojedynek', async (c) => {
   )
     .bind(contest.id, user.id, JSON.stringify(data), now())
     .run();
-  const results = canSeeResults(contest, user, true) ? await computeTally(c.env.DB, contest, 'duel', entries) : null;
+  const results = canSeeResults(contest, user, true, contest.manager) ? await computeTally(c.env.DB, contest, 'duel', entries) : null;
   return c.json({ ok: true, data, results });
 });
 
@@ -87,7 +92,7 @@ api.post('/api/konkursy/:id/glos/usun', async (c) => {
   const user = c.var.user!;
   const contest = await contestFor(c);
   if (!contest) return err(c, 'Nie ma takiego konkursu.', 404);
-  if (!votingOpen(contest, user)) return err(c, 'Głosowanie jest zamknięte.', 409);
+  if (!votingOpen(contest)) return err(c, 'Głosowanie jest zamknięte.', 409);
   const body = await readJson<{ method?: string }>(c);
   if (!body || !isMethod(body.method)) return err(c, 'Nieprawidłowy sposób głosowania.');
   await c.env.DB.prepare('DELETE FROM ballots WHERE contest_id = ? AND user_id = ? AND method = ?').bind(contest.id, user.id, body.method).run();
@@ -102,7 +107,7 @@ api.post('/api/konkursy/:id/zgloszenia', async (c) => {
   if (!store) return err(c, 'Przechowywanie plików nie jest skonfigurowane.', 503);
   const contest = await contestFor(c);
   if (!contest || contest.kind !== 'rollup') return err(c, 'Nie ma takiego konkursu.', 404);
-  if (contest.phase !== 'submissions' && user.role !== 'admin') return err(c, 'Zgłoszenia są zamknięte.', 409);
+  if (contest.phase !== 'submissions' && !contest.manager) return err(c, 'Zgłoszenia są zamknięte.', 409);
   const s = { ...ROLLUP_DEFAULTS, ...contest.settings };
   const body = await readJson<{ title?: string; file_name?: string; file_type?: string; file_size?: number; report?: unknown }>(c, 64 * 1024);
   if (!body) return err(c, 'Nieprawidłowe dane.');
@@ -147,13 +152,14 @@ api.post('/api/konkursy/:id/zgloszenia', async (c) => {
   return c.json({ ok: true, id: row!.id, parts, chunkSize: CHUNK_SIZE });
 });
 
-async function ownEntry(c: Context<AppEnv>): Promise<EntryRow | null> {
+/** Zgłoszenie dostępne dla autora, admina systemu i opiekuna konkursu (manager = admin lub opiekun) */
+async function ownEntry(c: Context<AppEnv>): Promise<(EntryRow & { manager: boolean }) | null> {
   const id = Number(c.req.param('id'));
   if (!Number.isInteger(id)) return null;
   const e = await c.env.DB.prepare('SELECT * FROM entries WHERE id = ?').bind(id).first<EntryRow>();
   if (!e) return null;
-  const user = c.var.user!;
-  return e.author_id === user.id || user.role === 'admin' ? e : null;
+  const manager = await canManage(c.env.DB, c.var.user!, e.contest_id);
+  return e.author_id === c.var.user!.id || manager ? { ...e, manager } : null;
 }
 
 api.put('/api/zgloszenia/:id/czesc/:n', async (c) => {
@@ -192,9 +198,9 @@ api.post('/api/zgloszenia/:id/zakoncz', async (c) => {
   return c.json({ ok: true });
 });
 
-async function runAi(c: Context<AppEnv>, imageB64: string, title: string, report: unknown) {
+async function runAi(c: Context<AppEnv>, imageB64: string, title: string, report: unknown, unlimited = false) {
   const user = c.var.user!;
-  if (!(await takeAiQuota(c.env, user.id, user.role === 'admin')))
+  if (!(await takeAiQuota(c.env, user.id, unlimited || user.role === 'admin')))
     return { error: `Wykorzystano dzienny limit ocen AI (${c.env.AI_DAILY_LIMIT || 15}). Spróbuj jutro.` };
   try {
     const review = await reviewDesign(c.env, { imageB64, title, report });
@@ -212,7 +218,7 @@ api.post('/api/zgloszenia/:id/ocena-ai', async (c) => {
   const stream = await store.get(e.preview_key);
   if (!stream) return err(c, 'Nie znaleziono podglądu.', 404);
   const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
-  const out = await runAi(c, b64(bytes), e.title, safeJson(e.report, {}));
+  const out = await runAi(c, b64(bytes), e.title, safeJson(e.report, {}), e.manager);
   if ('error' in out) return err(c, out.error!, 502);
   await c.env.DB.prepare('UPDATE entries SET ai_report = ? WHERE id = ?').bind(JSON.stringify(out.review), e.id).run();
   const html = await (<AiReviewView review={out.review!} />).toString();
@@ -235,7 +241,7 @@ api.post('/zgloszenia/:id/usun', async (c) => {
   const e = await ownEntry(c);
   if (!e) return c.notFound();
   const contest = await getContest(c.env.DB, e.contest_id);
-  if (user.role !== 'admin' && contest?.phase !== 'submissions') {
+  if (!e.manager && contest?.phase !== 'submissions') {
     setFlash(c, 'err', 'Zgłoszenia można usuwać tylko w trakcie przyjmowania projektów.');
     return c.redirect(`/konkursy/${contest?.slug ?? ''}`);
   }
@@ -256,7 +262,7 @@ api.get('/pliki/:id/:what{podglad|plik}', async (c) => {
   const e = await c.env.DB.prepare('SELECT * FROM entries WHERE id = ?').bind(id).first<EntryRow>();
   if (!store || !e || !e.file_key) return c.notFound();
   const contest = await getContest(c.env.DB, e.contest_id);
-  const isOwner = e.author_id === user.id || user.role === 'admin';
+  const isOwner = e.author_id === user.id || (await canManage(c.env.DB, user, e.contest_id));
   const what = c.req.param('what');
 
   if (what === 'podglad') {

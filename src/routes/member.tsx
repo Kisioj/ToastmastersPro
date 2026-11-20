@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv, Contest, EntryRow, User } from '../env';
-import { canSeeResults, computeTallies, getContest, isTestMode, listContests, listEntries, ROLLUP_DEFAULTS, userBallots } from '../lib/contests';
+import { canManage, canSeeResults, computeTallies, getContest, isTestMode, listContests, listEntries, managedContestIds, ROLLUP_DEFAULTS, userBallots } from '../lib/contests';
 import { setFlash, takeFlash } from '../lib/flash';
 import { hashPassword, MIN_PASSWORD, passwordProblem } from '../lib/password';
 import { firstName, fmtDate, fmtSize, safeJson } from '../lib/util';
@@ -21,7 +21,9 @@ const ctaFor = (c: Contest, voted: boolean) => {
 
 member.get('/', async (c) => {
   const user = c.var.user!;
-  const contests = await listContests(c.env.DB, user.role === 'admin');
+  const isAdmin = user.role === 'admin';
+  const managed = isAdmin ? new Set<number>() : await managedContestIds(c.env.DB, user.id);
+  const contests = (await listContests(c.env.DB, true)).filter((ct) => ct.phase !== 'draft' || isAdmin || managed.has(ct.id));
   const { results: voted } = await c.env.DB.prepare('SELECT DISTINCT contest_id FROM ballots WHERE user_id = ?').bind(user.id).all<{ contest_id: number }>();
   const votedSet = new Set(voted.map((v) => v.contest_id));
   return c.html(
@@ -42,9 +44,16 @@ member.get('/', async (c) => {
                   </p>
                   <h3>{ct.title}</h3>
                   {ct.description && <p>{ct.description.length > 180 ? `${ct.description.slice(0, 180)}…` : ct.description}</p>}
-                  <a class="btn" href={`/konkursy/${ct.slug}`}>
-                    {ctaFor(ct, votedSet.has(ct.id))}
-                  </a>
+                  <p class="row" style="margin:auto 0 0">
+                    <a class="btn" href={`/konkursy/${ct.slug}`}>
+                      {ctaFor(ct, votedSet.has(ct.id))}
+                    </a>
+                    {(isAdmin || managed.has(ct.id)) && (
+                      <a class="btn ghost" href={`/admin/konkursy/${ct.id}`}>
+                        Zarządzaj
+                      </a>
+                    )}
+                  </p>
                 </article>
               ))}
             </div>
@@ -61,18 +70,21 @@ member.get('/konkursy/:slug', async (c) => {
   const user = c.var.user!;
   const db = c.env.DB;
   const contest = await getContest(db, c.req.param('slug'));
-  if (!contest || (contest.phase === 'draft' && user.role !== 'admin')) return c.notFound();
+  if (!contest) return c.notFound();
+  // admin systemu albo opiekun tego konkursu
+  const manager = await canManage(db, user, contest.id);
+  if (contest.phase === 'draft' && !manager) return c.notFound();
 
   const entries = await listEntries(db, contest.id);
   const ballots = await userBallots(db, contest.id, user.id);
-  const visibleMethods = contest.methods.filter((m) => canSeeResults(contest, user, m in ballots));
+  const visibleMethods = contest.methods.filter((m) => canSeeResults(contest, user, m in ballots, manager));
   const tallies = await computeTallies(db, contest, visibleMethods, entries);
   const feedback = await db
     .prepare('SELECT preferred, comment FROM method_feedback WHERE contest_id = ? AND user_id = ?')
     .bind(contest.id, user.id)
     .first<{ preferred: string; comment: string }>();
   const testMode = isTestMode(contest);
-  const showVoting = contest.phase === 'voting' || (contest.phase === 'draft' && user.role === 'admin');
+  const showVoting = contest.phase === 'voting' || (contest.phase === 'draft' && manager);
   const isRollup = contest.kind === 'rollup';
 
   const mySubs =
@@ -87,7 +99,7 @@ member.get('/konkursy/:slug', async (c) => {
 
   // admin widzi wszystkie zgłoszenia z autorami; członkowie tylko swoje (w głosowaniu — bez nazwisk)
   const allSubs =
-    isRollup && user.role === 'admin'
+    isRollup && manager
       ? (
           await db
             .prepare(
@@ -109,7 +121,7 @@ member.get('/konkursy/:slug', async (c) => {
         <p class="row" style="margin:16px 0 0">
           <PhasePill phase={contest.phase} />
           {testMode && showVoting && <span class="pill warn">Tryb testowy: kilka sposobów głosowania</span>}
-          {user.role === 'admin' && (
+          {manager && (
             <a class="btn ghost small" href={`/admin/konkursy/${contest.id}`}>
               Ustawienia konkursu
             </a>
@@ -119,11 +131,11 @@ member.get('/konkursy/:slug', async (c) => {
 
       {isRollup && contest.phase === 'submissions' && <RollupSubmit contest={contest} user={user} mySubs={mySubs} aiOn={aiProvider(c.env) !== null} storeOn={getStore(c.env) !== null} />}
 
-      {user.role === 'admin' && isRollup && (
+      {manager && isRollup && (
         <section class="section tight">
           <div class="wrap mid">
             <h2>
-              Wszystkie zgłoszenia ({allSubs.length}) <span class="pill">widok admina</span>
+              Wszystkie zgłoszenia ({allSubs.length}) <span class="pill">{user.role === 'admin' ? 'widok admina' : 'widok opiekuna'}</span>
             </h2>
             <p class="muted">Członkowie widzą tylko własne projekty, a w głosowaniu — same projekty, bez nazwisk autorów.</p>
             {allSubs.length === 0 ? (
@@ -163,7 +175,7 @@ member.get('/konkursy/:slug', async (c) => {
       {showVoting && (
         <section class="section tight">
           <div class="wrap mid">
-            {contest.phase === 'draft' && <p class="callout">Podgląd admina — konkurs jest w szkicu, członkowie go nie widzą.</p>}
+            {contest.phase === 'draft' && <p class="callout">Podgląd dla zarządzających — konkurs jest w szkicu, członkowie go nie widzą.</p>}
             {testMode && (
               <div class="callout" style="margin-bottom:20px">
                 <p>
